@@ -2,8 +2,8 @@ from telegram import Update, ForceReply
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import requests
 import os
-from dotenv import load_dotenv
-load_dotenv()
+# from dotenv import load_dotenv
+# load_dotenv()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hello! I'm Luna chatbot. How can I assist you today?", reply_markup=ForceReply(selective=True))
@@ -79,6 +79,8 @@ async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not TELEGRAM_BOT_TOKEN:
+        raise ValueError("TELEGRAM_BOT_TOKEN environment variable missing!")
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("model", switch_model))
