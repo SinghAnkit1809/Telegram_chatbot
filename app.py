@@ -174,7 +174,10 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("model", switch_model))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_with_bot))
     app.add_handler(CommandHandler("imagine", imagine))
-    app.add_handler(CallbackQueryHandler(handle_image_callback))
+    
+    # Fix handler order - specific patterns first!
     app.add_handler(CallbackQueryHandler(handle_model_callback, pattern='^chatmodel:'))
+    app.add_handler(CallbackQueryHandler(handle_image_callback))
+    
     print("Bot is running...")
     app.run_polling()
