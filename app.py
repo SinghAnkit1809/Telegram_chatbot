@@ -1,7 +1,9 @@
-from telegram import Update, ForceReply
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import requests
 import os
+import random
+from image_gen import generate_image
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hello! I'm Luna chatbot. How can I assist you today?", reply_markup=ForceReply(selective=True))
@@ -75,6 +77,69 @@ async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send the bot's response to the user
     await update.message.reply_text(bot_response, reply_markup=ForceReply(selective=True))
 
+async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /imagine command"""
+    if not context.args:
+        await update.message.reply_text("Please provide a prompt after the command.\nExample: /imagine a sunset")
+        return
+
+    prompt = ' '.join(context.args)
+    context.user_data['image_prompt'] = prompt
+    
+    # Create aspect ratio buttons
+    size_buttons = [
+        InlineKeyboardButton("1:1 (Square)", callback_data='size:512x512'),
+        InlineKeyboardButton("9:16 (Portrait)", callback_data='size:576x1024'),
+        InlineKeyboardButton("16:9 (Landscape)", callback_data='size:1024x576'),
+        InlineKeyboardButton("2:1 (Wide)", callback_data='size:1024x512')
+    ]
+    
+    await update.message.reply_text(
+        "Choose an aspect ratio:",
+        reply_markup=InlineKeyboardMarkup([size_buttons[i:i+2] for i in range(0, len(size_buttons), 2)])
+    )
+
+async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle button callbacks for image generation"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data.startswith('size:'):
+        # Store size and show model selection
+        width, height = query.data.split(':')[1].split('x')
+        context.user_data['image_size'] = (width, height)
+        
+        # Model selection buttons
+        models = ["Flux", "Flux-pro", "Flux-Realism", "Flux-anime", "Flux-3d", "Flux-cablyai", "Turbo"]
+        model_buttons = [InlineKeyboardButton(m, callback_data=f'model:{m}') for m in models]
+        
+        await query.edit_message_text(
+            text="Now choose a model:",
+            reply_markup=InlineKeyboardMarkup([model_buttons[i:i+2] for i in range(0, len(model_buttons), 2)])
+        )
+    elif query.data.startswith('model:'):
+        # Generate image with all parameters
+        model = query.data.split(':')[1]
+        prompt = context.user_data['image_prompt']
+        width, height = context.user_data['image_size']
+        
+        image_url = generate_image(
+            prompt=prompt,
+            width=width,
+            height=height,
+            model=model,
+            seed=random.randint(0, 1000000)
+        )
+        
+        if image_url:
+            await context.bot.send_photo(
+                chat_id=query.message.chat_id,
+                photo=image_url,
+                caption=f"🖼️ {prompt}\nModel: {model} | Size: {width}x{height}"
+            )
+        else:
+            await query.edit_message_text("Failed to generate image. Please try again.")
+
 if __name__ == "__main__":
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     if not TELEGRAM_BOT_TOKEN:
@@ -83,5 +148,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("model", switch_model))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_with_bot))
+    app.add_handler(CommandHandler("imagine", imagine))
+    app.add_handler(CallbackQueryHandler(handle_image_callback))
     print("Bot is running...")
     app.run_polling()
