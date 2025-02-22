@@ -16,11 +16,16 @@ async def switch_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['selected_model'] = selected_model
         await update.message.reply_text(f"Switched to {selected_model} model!")
     else:
-        # Create buttons for model selection
+        # Create buttons in 2 columns for better width
         model_buttons = [
-            [InlineKeyboardButton(model, callback_data=f'chatmodel:{model}')] 
-            for model in available_models
+            [InlineKeyboardButton(m1, callback_data=f'chatmodel:{m1}'),
+             InlineKeyboardButton(m2, callback_data=f'chatmodel:{m2}')] 
+            for m1, m2 in zip(available_models[::2], available_models[1::2])
         ]
+        # Add last model if odd count
+        if len(available_models) % 2 != 0:
+            model_buttons.append([InlineKeyboardButton(available_models[-1], callback_data=f'chatmodel:{available_models[-1]}')])
+        
         await update.message.reply_text(
             "Choose a chat model:",
             reply_markup=InlineKeyboardMarkup(model_buttons)
@@ -34,9 +39,10 @@ async def handle_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if query.data.startswith('chatmodel:'):
         selected_model = query.data.split(':')[1]
         context.user_data['selected_model'] = selected_model.lower()
+        # Edit original message to remove buttons
         await query.edit_message_text(
-            text=f"Switched to {selected_model} model!",
-            reply_markup=None  # Remove the buttons
+            text=f"✅ Switched to {selected_model} model!",
+            reply_markup=None
         )
 
 async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -149,7 +155,8 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
         
         if image_url:
-            await query.edit_message_reply_markup(reply_markup=None)  # Remove buttons
+            # Remove buttons from both messages
+            await query.edit_message_reply_markup(reply_markup=None)
             await context.bot.send_photo(
                 chat_id=query.message.chat_id,
                 photo=image_url,
