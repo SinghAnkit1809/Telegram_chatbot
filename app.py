@@ -11,16 +11,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def switch_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     available_models = ["mistral-large", "openai", "openai-large", "qwen-coder", "llama", "deepseek-r1", "claude-hybridspace"]
     
-    if not context.args or context.args[0].lower() not in [m.lower() for m in available_models]:
-        model_list = "\n".join(f"- {model}" for model in available_models)
+    if context.args and context.args[0].lower() in [m.lower() for m in available_models]:
+        selected_model = context.args[0].lower()
+        context.user_data['selected_model'] = selected_model
+        await update.message.reply_text(f"Switched to {selected_model} model!")
+    else:
+        # Create buttons for model selection
+        model_buttons = [
+            [InlineKeyboardButton(model, callback_data=f'chatmodel:{model}')] 
+            for model in available_models
+        ]
         await update.message.reply_text(
-            f"Please specify a valid model name:\n{model_list}\n\nUsage: /model model_name"
+            "Choose a chat model:",
+            reply_markup=InlineKeyboardMarkup(model_buttons)
         )
-        return
 
-    selected_model = context.args[0].lower()
-    context.user_data['selected_model'] = selected_model
-    await update.message.reply_text(f"Switched to {selected_model} model!")
+async def handle_model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle chat model selection callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data.startswith('chatmodel:'):
+        selected_model = query.data.split(':')[1]
+        context.user_data['selected_model'] = selected_model.lower()
+        await query.edit_message_text(
+            text=f"Switched to {selected_model} model!",
+            reply_markup=None  # Remove the buttons
+        )
 
 async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text
@@ -88,15 +105,15 @@ async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Create aspect ratio buttons
     size_buttons = [
-        InlineKeyboardButton("1:1 (Square)", callback_data='size:512x512'),
-        InlineKeyboardButton("9:16 (Portrait)", callback_data='size:576x1024'),
-        InlineKeyboardButton("16:9 (Landscape)", callback_data='size:1024x576'),
-        InlineKeyboardButton("2:1 (Wide)", callback_data='size:1024x512')
+        [InlineKeyboardButton("1:1 (Square)", callback_data='size:512x512')],
+        [InlineKeyboardButton("9:16 (Portrait)", callback_data='size:576x1024')],
+        [InlineKeyboardButton("16:9 (Landscape)", callback_data='size:1024x576')],
+        [InlineKeyboardButton("2:1 (Wide)", callback_data='size:1024x512')]
     ]
     
     await update.message.reply_text(
         "Choose an aspect ratio:",
-        reply_markup=InlineKeyboardMarkup([size_buttons[i:i+2] for i in range(0, len(size_buttons), 2)])
+        reply_markup=InlineKeyboardMarkup(size_buttons)
     )
 
 async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -132,6 +149,7 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
         
         if image_url:
+            await query.edit_message_reply_markup(reply_markup=None)  # Remove buttons
             await context.bot.send_photo(
                 chat_id=query.message.chat_id,
                 photo=image_url,
@@ -150,5 +168,6 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_with_bot))
     app.add_handler(CommandHandler("imagine", imagine))
     app.add_handler(CallbackQueryHandler(handle_image_callback))
+    app.add_handler(CallbackQueryHandler(handle_model_callback, pattern='^chatmodel:'))
     print("Bot is running...")
     app.run_polling()
