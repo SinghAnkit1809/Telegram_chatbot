@@ -1,3 +1,4 @@
+#telegram bot image_gen.py
 import requests
 from urllib.parse import quote
 

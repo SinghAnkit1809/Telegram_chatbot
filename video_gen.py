@@ -1,3 +1,4 @@
+#telegram bot video_gen.py
 import os
 import math
 import time
@@ -204,35 +205,42 @@ class VideoGenerator:
         draw = ImageDraw.Draw(img)
         
         try:
-            font = ImageFont.truetype("Arial_Bold.ttf", 60)
+            font = ImageFont.truetype("arialbd.ttf", size=60)
         except:
-            font = ImageFont.load_default(60)
-        
-        # Smart text wrapping
+            try:
+                font = ImageFont.truetype("Arial_Bold.ttf", size=60)
+            except:
+                font = ImageFont.load_default(size=60)
+
+        # Split text into four-word chunks (original logic)
         words = text.split()
-        lines = []
-        current_line = []
-        max_width = self.width - 200
+        four_word_lines = [' '.join(words[i:i+4]) for i in range(0, len(words), 4)]
         
-        for word in words:
-            test_line = ' '.join(current_line + [word])
-            w, _ = draw.textsize(test_line, font=font)
-            if w > max_width and current_line:
-                lines.append(' '.join(current_line))
-                current_line = [word]
-            else:
-                current_line.append(word)
-        if current_line:
-            lines.append(' '.join(current_line))
+        # Calculate positions with original spacing
+        line_height = font.getbbox("A")[3] - font.getbbox("A")[1]  # Maintain original height calculation
+        total_height = len(four_word_lines) * (line_height + 10)  # Preserve 10px padding between lines
+        y_position = (self.height // 2) - (total_height // 2)  # Center vertically
         
-        # Center text vertically
-        total_height = sum(font.getsize(line)[1] for line in lines) + 10*(len(lines)-1)
-        y = (self.height - total_height) // 2
-        
-        for line in lines:
-            w, h = draw.textsize(line, font=font)
-            x = (self.width - w) // 2
-            draw.text((x, y), line, font=font, fill="#FFFF00", stroke_width=3, stroke_fill="#000000")
-            y += h + 10
-        
+        side_padding = 100  # Keep original padding
+
+        for line in four_word_lines:
+            # Get text dimensions using modern method while preserving original layout
+            bbox = font.getbbox(line)
+            text_width = bbox[2] - bbox[0]  # Calculate width from bounding box
+            text_height = bbox[3] - bbox[1]  # Not used but maintained for completeness
+            
+            # Original positioning logic
+            x_position = max(side_padding, (self.width - text_width) // 2)
+            
+            # Original text rendering with stroke
+            draw.text(
+                (x_position, y_position),
+                line,
+                font=font,
+                fill="#FFFF00",
+                stroke_width=3,
+                stroke_fill="#000000"
+            )
+            y_position += line_height + 10  # Maintain original line spacing
+
         return np.array(img) 
