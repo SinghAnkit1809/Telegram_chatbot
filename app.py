@@ -187,16 +187,16 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Start generation
         generator = VideoGenerator()
         topic = ' '.join(context.args)
-        video_path = await generator.generate_video(topic, progress_update)
+        video_bytes = await generator.generate_video(topic, progress_update)
         
-        # Send video and clean up
-        with open(video_path, 'rb') as video_file:
-            await context.bot.send_video(
-                chat_id=update.message.chat_id,
-                video=video_file,
-                caption="Here's your generated video!",
-                reply_to_message_id=update.message.message_id
-            )
+        # Send video from memory
+        await context.bot.send_video(
+            chat_id=update.message.chat_id,
+            video=video_bytes,
+            caption="Here's your generated video!",
+            reply_to_message_id=update.message.message_id,
+            supports_streaming=True
+        )
         
         # Delete status message
         await context.bot.delete_message(

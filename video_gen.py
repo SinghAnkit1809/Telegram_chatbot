@@ -41,7 +41,7 @@ class VideoGenerator:
                 time.sleep(1)
 
     async def generate_video(self, topic, progress_callback=None):
-        """Main video generation workflow with automatic cleanup"""
+        """Main video generation workflow"""
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             try:
@@ -62,19 +62,12 @@ class VideoGenerator:
                     await progress_callback("🔊 Recording narration...")
                 audio_path = await self._generate_audio(segments, temp_path)
                 
-                # Video compilation
-                if progress_callback:
-                    await progress_callback("🎬 Finalizing your movie...")
-                video_path = self._compile_video(images, audio_path, temp_path)
+                # Get video bytes before cleanup
+                video_bytes = self.compile_video(images, segments, audio_path, temp_path)
+                return video_bytes
                 
-                return video_path
-            finally:
-                # Cleanup all temporary files
-                for f in temp_path.glob('*'):
-                    try:
-                        f.unlink(missing_ok=True)
-                    except Exception as e:
-                        print(f"Warning: Couldn't delete {f}: {str(e)}")
+            except Exception as e:
+                raise RuntimeError(f"Generation failed: {str(e)}")
 
     def _generate_story(self, topic):
         """Generate story segments with proper pacing"""
@@ -163,25 +156,47 @@ class VideoGenerator:
         combined.write_audiofile(str(final_path))
         return final_path
 
-    def _compile_video(self, images, audio_path, temp_path):
-        """Create final video with captions"""
-        audio = AudioFileClip(str(audio_path))
-        clips = []
-        
-        for img, duration in zip(images, np.linspace(0, audio.duration, len(images))):
-            clip = ImageClip(img).set_duration(audio.duration/len(images))
-            clips.append(clip)
-        
-        video = concatenate_videoclips(clips).set_audio(audio)
-        video_path = temp_path / "final_video.mp4"
-        video.write_videofile(
-            str(video_path),
-            fps=24,
-            threads=4,
-            preset='ultrafast',
-            ffmpeg_params=['-movflags', '+faststart']
-        )
-        return video_path
+    def compile_video(self, images, segments, audio_path, temp_path):
+        """Create final video file and return its bytes"""
+        try:
+            audio = AudioFileClip(str(audio_path))
+            clips = []
+            
+            segment_duration = audio.duration / len(segments)
+            for img, text in zip(images, segments):
+                img_with_caption = self._add_captions(img, text)
+                clip = ImageClip(img_with_caption).set_duration(segment_duration)
+                clips.append(clip)
+            
+            video = concatenate_videoclips(clips).set_audio(audio)
+            video_path = temp_path / "final_video.mp4"
+            
+            # Write to in-memory bytes buffer
+            video_bytes = BytesIO()
+            video.write_videofile(
+                str(video_path),
+                fps=24,
+                threads=4,
+                preset='ultrafast',
+                ffmpeg_params=['-movflags', '+faststart'],
+                logger=None  # Disable progress logs
+            )
+            
+            # Read generated file back into memory
+            with open(video_path, 'rb') as f:
+                video_bytes.write(f.read())
+            
+            video_bytes.seek(0)
+            return video_bytes
+            
+        except Exception as e:
+            raise RuntimeError(f"Video compilation failed: {str(e)}")
+        finally:
+            # Ensure MoviePy objects are closed
+            if 'video' in locals():
+                video.close()
+            if 'audio' in locals():
+                audio.close()
 
     def _add_captions(self, image_array, text):
         """Add dynamic captions to images"""
