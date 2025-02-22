@@ -20,7 +20,7 @@ class VideoGenerator:
         self.model = "openai"
         self.width = 1080
         self.height = 1920
-        self.target_duration = 120
+        self.target_duration = 100
         self.max_segment_duration = 5
         self.num_segments = math.ceil(self.target_duration / self.max_segment_duration)
         self.speech_rate = "-10%"
