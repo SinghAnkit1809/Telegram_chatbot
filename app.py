@@ -4,6 +4,7 @@ import requests
 import os
 import random
 from image_gen import generate_image
+from video_gen import VideoGenerator
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hello! I'm Luna chatbot. How can I assist you today?", reply_markup=ForceReply(selective=True))
@@ -165,6 +166,51 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await query.edit_message_text("Failed to generate image. Please try again.")
 
+async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /video command"""
+    if not context.args:
+        await update.message.reply_text("Please provide a story prompt after the command.\nExample: /video a magical forest adventure")
+        return
+    
+    # Send initial status message
+    status_msg = await update.message.reply_text("🎥 Video generation started. This may take up to 5 minutes...")
+    
+    try:
+        # Create progress callback
+        async def progress_update(message):
+            await context.bot.edit_message_text(
+                chat_id=status_msg.chat_id,
+                message_id=status_msg.message_id,
+                text=f"{status_msg.text}\n\n{message}"
+            )
+        
+        # Start generation
+        generator = VideoGenerator()
+        topic = ' '.join(context.args)
+        video_path = await generator.generate_video(topic, progress_update)
+        
+        # Send video and clean up
+        with open(video_path, 'rb') as video_file:
+            await context.bot.send_video(
+                chat_id=update.message.chat_id,
+                video=video_file,
+                caption="Here's your generated video!",
+                reply_to_message_id=update.message.message_id
+            )
+        
+        # Delete status message
+        await context.bot.delete_message(
+            chat_id=status_msg.chat_id,
+            message_id=status_msg.message_id
+        )
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Video generation failed: {str(e)}")
+        await context.bot.delete_message(
+            chat_id=status_msg.chat_id,
+            message_id=status_msg.message_id
+        )
+
 if __name__ == "__main__":
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     if not TELEGRAM_BOT_TOKEN:
@@ -178,6 +224,8 @@ if __name__ == "__main__":
     # Fix handler order - specific patterns first!
     app.add_handler(CallbackQueryHandler(handle_model_callback, pattern='^chatmodel:'))
     app.add_handler(CallbackQueryHandler(handle_image_callback))
+    
+    app.add_handler(CommandHandler("video", video))
     
     print("Bot is running...")
     app.run_polling()
