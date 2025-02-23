@@ -298,16 +298,40 @@ class VideoGenerator:
         """Add captions with proper placement"""
         img = Image.fromarray(image_array)
         draw = ImageDraw.Draw(img)
-        
-        # Attempt to load a font, fallback to default if not found
-        try:
-            font = ImageFont.truetype("arialbd.ttf", size=80)
-        except:
-            try:
-                font = ImageFont.truetype("Arial_Bold.ttf", size=80)
-            except:
-                font = ImageFont.load_default()  # Fallback to default font
 
+        # Attempt to load a font, fallback to default if not found
+        # try:
+        #     font = ImageFont.truetype("arialbd.ttf", size=80)
+        # except:
+        #     try:
+        #         font = ImageFont.truetype("Arial_Bold.ttf", size=80)
+        #     except:
+        #         font = ImageFont.load_default()  # Fallback to default font
+        
+        # Dynamic font size based on video height (6% of screen height)
+        base_font_size = int(self.height * 0.06)  # ~77px for 1280 height
+        dynamic_font = None
+        
+        # Try different font options with descending priority
+        font_paths = [
+            "arialbd.ttf", 
+            "Arial_Bold.ttf",
+            "DejaVuSans-Bold.ttf",  # Common Linux font
+            "LiberationSans-Bold.ttf"  # Another common fallback
+        ]
+        
+        for path in font_paths:
+            try:
+                dynamic_font = ImageFont.truetype(path, size=base_font_size)
+                break
+            except:
+                continue
+                
+        if not dynamic_font:  # Ultimate fallback with scaling
+            dynamic_font = ImageFont.load_default()
+            # Scale up default font using 2x transform
+            dynamic_font = dynamic_font.font_variant(size=base_font_size*2)
+        
         # Split into shorter lines for better readability
         words = text.split()
         lines = []
@@ -323,7 +347,8 @@ class VideoGenerator:
             lines.append(' '.join(current_line))
         
         # Calculate text block positioning
-        line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
+        # line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
+        line_height = dynamic_font.getbbox("A")[3] - dynamic_font.getbbox("A")[1]
         total_height = len(lines) * (line_height + 10)
         y_position = (self.height // 2) + ((self.height // 2 - total_height) // 2) # Place near bottom with padding
         
@@ -333,7 +358,8 @@ class VideoGenerator:
         
         # Draw each line
         for line in lines:
-            bbox = font.getbbox(line)
+            # bbox = font.getbbox(line)
+            bbox = dynamic_font.getbbox(line)
             text_width = bbox[2] - bbox[0]
             x_position = max(100, (self.width - text_width) // 2)
             
@@ -341,7 +367,8 @@ class VideoGenerator:
             draw.text(
                 (x_position, y_position),
                 line,
-                font=font,
+                # font=font,
+                font=dynamic_font,
                 fill="#FFFF00",  # Text fill color
                 stroke_width=3,  # Outline width
                 stroke_fill="#000000"  # Outline color
