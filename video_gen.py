@@ -18,10 +18,14 @@ from tempfile import TemporaryDirectory
 class VideoGenerator:
     def __init__(self):
         self.model = "openai"
-        self.width = 1080
-        self.height = 1920
-        self.target_duration = 100
-        self.max_segment_duration = 5
+        # self.width = 1080
+        # self.height = 1920
+        # self.target_duration = 100
+        # self.max_segment_duration = 5
+        self.width = 720
+        self.height = 1280
+        self.target_duration = 45
+        self.max_segment_duration = 4
         self.num_segments = math.ceil(self.target_duration / self.max_segment_duration)
         self.speech_rate = "-10%"
 
@@ -43,6 +47,11 @@ class VideoGenerator:
 
     async def generate_video(self, topic, progress_callback=None):
         """Main video generation workflow"""
+        # Clear any existing memory
+        if hasattr(self, 'last_video'):
+            del self.last_video
+        import gc; gc.collect()
+        
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             try:
@@ -213,7 +222,7 @@ class VideoGenerator:
         return final_path, segment_durations
 
     async def _compile_video(self, images, segments, audio_path, temp_path):
-        """Create final video with properly timed captions"""
+        """Create final video with memory optimizations"""
         try:
             audio_path, segment_durations = audio_path
             clips = []
@@ -248,16 +257,29 @@ class VideoGenerator:
             final_clip = concatenate_videoclips(clips)
             final_clip = final_clip.set_audio(AudioFileClip(str(audio_path)))
             
-            # Write to temporary file then load into memory
+            # Optimized video writing parameters
             temp_video_path = temp_path / "temp_video.mp4"
             final_clip.write_videofile(
                 str(temp_video_path),
-                fps=24,
-                threads=4,
+                # fps=24,
+                # threads=4,
+                fps=15,  # Reduced from 24
+                threads=2,  # Reduced from 4
                 preset='ultrafast',
-                ffmpeg_params=['-movflags', '+faststart'],
+                # ffmpeg_params=['-movflags', '+faststart'],
+                ffmpeg_params=[
+                    '-movflags', '+faststart',
+                    '-vf', 'scale=720:1280',  # Force scale
+                    '-c:v', 'libx264',  # Hardware-friendly codec
+                    '-crf', '28'  # Higher compression
+                ],
                 logger=None
             )
+            
+            # Clear memory-intensive objects early
+            del images
+            del clips
+            del final_clip
             
             # Read file into memory
             with open(temp_video_path, 'rb') as f:
@@ -268,9 +290,9 @@ class VideoGenerator:
             
         except Exception as e:
             raise RuntimeError(f"Video compilation failed: {str(e)}")
-        finally:
-            if 'final_clip' in locals():
-                final_clip.close()
+        # finally:
+        #     if 'final_clip' in locals():
+        #         final_clip.close()
 
     def _add_captions(self, image_array, text):
         """Add captions with proper placement"""
