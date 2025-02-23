@@ -301,10 +301,10 @@ class VideoGenerator:
         
         # Attempt to load a font, fallback to default if not found
         try:
-            font = ImageFont.truetype("arialbd.ttf", size=60)
+            font = ImageFont.truetype("arialbd.ttf", size=80)
         except:
             try:
-                font = ImageFont.truetype("Arial_Bold.ttf", size=60)
+                font = ImageFont.truetype("Arial_Bold.ttf", size=80)
             except:
                 font = ImageFont.load_default()  # Fallback to default font
 
