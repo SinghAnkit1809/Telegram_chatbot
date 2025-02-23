@@ -296,7 +296,7 @@ class VideoGenerator:
         #         final_clip.close()
 
     def _add_captions(self, image_array, text):
-        """Add captions with proper placement"""
+        """Universal font size solution"""
         img = Image.fromarray(image_array)
         draw = ImageDraw.Draw(img)
 
@@ -315,10 +315,12 @@ class VideoGenerator:
         
         # Try different font options with descending priority
         font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Common on Linux
+            "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
             "arialbd.ttf", 
             "Arial_Bold.ttf",
-            "DejaVuSans-Bold.ttf",  # Common Linux font
-            "LiberationSans-Bold.ttf"  # Another common fallback
+            # "DejaVuSans-Bold.ttf",  # Common Linux font
+            # "LiberationSans-Bold.ttf"  # Another common fallback
         ]
         
         for path in font_paths:
@@ -331,7 +333,7 @@ class VideoGenerator:
         if not dynamic_font:  # Ultimate fallback with scaling
             dynamic_font = ImageFont.load_default()
             # Scale up default font using 2x transform
-            dynamic_font = dynamic_font.font_variant(size=base_font_size*2)
+            dynamic_font = dynamic_font.font_variant(size=base_font_size)
         
         # Split into shorter lines for better readability
         words = text.split()
