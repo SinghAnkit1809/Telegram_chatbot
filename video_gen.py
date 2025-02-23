@@ -309,7 +309,7 @@ class VideoGenerator:
         #         font = ImageFont.load_default()  # Fallback to default font
         
         # Dynamic font size based on video height (6% of screen height)
-        base_font_size = int(self.height * 0.06)  # ~77px for 1280 height
+        base_font_size = int(self.height * 0.04)  # ~77px for 1280 height
         dynamic_font = None
         
         # Try different font options with descending priority
