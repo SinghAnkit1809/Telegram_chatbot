@@ -151,31 +151,28 @@ class VideoGenerator:
         return text, segments[:self.num_segments]
 
     def _create_image_prompts(self, story, segments):
-        """Generate consistent visual prompts using characteristics"""
-        prompt = f"""IMAGE PROMPT RULES:
-            1. CHARACTER ANALYSIS:
-            Identify ALL characters in this story and list their PERMANENT VISUAL FEATURES:
+        """Generate consistent visual prompts"""
+        prompt = f"""IMAGE PROMPT GUIDELINES:
+            1. FIRST IDENTIFY ALL CHARACTERS:
+            Read this story and list ALL characters with their visual features:
             {story}
 
-            2. PROMPT GENERATION:
-            Create {len(segments)} image prompts for these story segments:
-            {json.dumps(segments)}
+            2. FOR EACH SEGMENT:
+             Create image prompts for each of the {len(segments)} segments:
+                {json.dumps(segments)}
 
-            STRICT RULES:
-            - ABSOLUTELY NO NAMES OR PRONOUNS - use descriptors like "young woman with braids" never "Mia"
-            - For recurring characters: MATCH VISUAL FEATURES EXACTLY (e.g. same hair color/clothing)
-            - Focus on PHYSICAL ATTRIBUTES: age, clothing, hair, accessories, body type
-            - Include ENVIRONMENT details relevant to the scene
-            - ART STYLE: Consistent cartoonish digital art
-            - MAX 120 CHARACTERS
+                Create image prompts following these rules:
+                - USE CHARACTER TITLES: "Young girl with red braids" not "she"
+                - ONLY SHOW CHARACTERS EXPLICITLY MENTIONED IN THE SEGMENT
+                - MAINTAIN IDENTICAL FEATURES WHEN SAME CHARACTER REAPPEARS
+                - DO NOT USE NAMES OR PRONOUNS instead use descriptive terms like "young girl with red braids", "old man with white beard", "little boy with glasses", "little fox with big ears", "little cute rabbit" etc.
+                - ART STYLE: Digital art cartoonish (consistent for all)
+                - MAX 120 CHARACTERS PER PROMPT
 
-            BAD EXAMPLE: "Mia carries buckets up hill" 
-            GOOD EXAMPLE: "Young girl with red braids in blue dress carrying water buckets up steep path, digital cartoon"
-
-            EXAMPLE PROMPTS:
-            1. "Cheerful baker in striped apron kneading dough, cartoonish digital art"
-            2. "Village market with colorful stalls and fresh bread, digital art"
-            3. "Same dark-haired baker decorating cake with strawberries, cartoon style"
+                EXAMPLE PROMPTS:
+                1. "Cheerful baker in striped apron kneading dough, cartoonish digital art"
+                2. "Village market with colorful stalls and fresh bread, digital art"
+                3. "Same baker decorating cake with strawberries, cartoon style"
 
             3. TECHNICAL:
             - Max 120 characters per prompt
@@ -187,7 +184,7 @@ class VideoGenerator:
             "https://text.pollinations.ai/",
             json={
                 "messages": [
-                    {"role": "system", "content": "You are a visual designer that creates CHARACTERISTIC-BASED image prompts. Never use names or pronouns - only physical descriptions."},
+                    {"role": "system", "content": "You are a consistent visual designer that maintains character continuity. You Design prompts for Midjourney."},
                     {"role": "user", "content": prompt}
                 ],
                 "model": self.model,
