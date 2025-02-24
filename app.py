@@ -11,7 +11,9 @@ async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """Check if user is member of required channel"""
     user_id = update.effective_user.id
     try:
-        member = await context.bot.get_chat_member("@LunarckAI", user_id)
+        # Use your channel's @username (including the @)
+        channel_username = "@LunarckAI"
+        member = await context.bot.get_chat_member(channel_username, user_id)
         return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
         print(f"Membership check error: {e}")
