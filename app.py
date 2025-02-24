@@ -7,10 +7,44 @@ import random
 from image_gen import generate_image
 from video_gen import VideoGenerator
 
+async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Check if user is member of required channel"""
+    user_id = update.effective_user.id
+    try:
+        member = await context.bot.get_chat_member("@LunarckAI", user_id)
+        return member.status in ['member', 'administrator', 'creator']
+    except Exception as e:
+        print(f"Membership check error: {e}")
+        return False
+
+async def send_join_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send channel join requirement message"""
+    keyboard = [
+        [InlineKeyboardButton("Join Lunarck AI", url="https://t.me/LunarckAI")],
+        [InlineKeyboardButton("I Joined ✅", callback_data="verify_join")]
+    ]
+    if update.message:
+        await update.message.reply_text(
+            "🔒 You must join our official channel to use this bot!\n\n"
+            "Please join the channel below then verify:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    elif update.callback_query:
+        query = update.callback_query
+        await query.edit_message_text(
+            "🔒 You must join our official channel to use this bot!\n\n"
+            "Please join the channel below then verify:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_membership(update, context):
+        return await send_join_prompt(update, context)
     await update.message.reply_text("Hello! I'm Luna chatbot. How can I assist you today?", reply_markup=ForceReply(selective=True))
 
 async def switch_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_membership(update, context):
+        return await send_join_prompt(update, context)
     available_models = ["mistral-large", "openai", "openai-large", "qwen-coder", "llama", "deepseek-r1", "claude-hybridspace"]
     
     if context.args and context.args[0].lower() in [m.lower() for m in available_models]:
@@ -48,6 +82,8 @@ async def handle_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
 async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_membership(update, context):
+        return await send_join_prompt(update, context)
     user_input = update.message.text
 
     # Extract conversation history from the message if present
@@ -103,6 +139,8 @@ async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(bot_response, reply_markup=ForceReply(selective=True))
 
 async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_membership(update, context):
+        return await send_join_prompt(update, context)
     """Handle /imagine command"""
     if not context.args:
         await update.message.reply_text("Please provide a prompt after the command.\nExample: /imagine a sunset")
@@ -168,6 +206,8 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text("Failed to generate image. Please try again.")
 
 async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_membership(update, context):
+        return await send_join_prompt(update, context)
     """Handle /video command"""
     if not context.args:
         await update.message.reply_text("Please provide a story prompt after the command.\nExample: /video a magical forest adventure")
@@ -212,11 +252,25 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=status_msg.message_id
         )
 
+# Add new callback handler
+async def verify_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if await check_membership(update, context):
+        await query.edit_message_text("✅ Verification successful! You can now use the bot.")
+    else:
+        await query.answer("❌ You haven't joined yet. Please join the channel first!", show_alert=True)
+
 if __name__ == "__main__":
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable missing!")
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Add verification handler first
+    app.add_handler(CallbackQueryHandler(verify_join_callback, pattern='^verify_join$'))
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("model", switch_model))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_with_bot))
