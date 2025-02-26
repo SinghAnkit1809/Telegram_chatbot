@@ -43,7 +43,7 @@ class VideoGenerator:
                 time.sleep(2)
                 continue
 
-    @async_task  # Add decorator to make it run in task queue
+    @async_task
     async def _generate_video_task(self, task_id, topic, progress_callback=None):
         """Main video generation workflow wrapped as a task"""
         try:
@@ -91,6 +91,7 @@ class VideoGenerator:
                 return video_bytes
                 
         except Exception as e:
+            print(f"Video generation error: {str(e)}")
             raise RuntimeError(f"Video generation failed: {str(e)}")
 
     async def generate_video(self, topic, progress_callback=None):

@@ -93,7 +93,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set up a new broadcast message"""
+    """Set up a new broadcast message and send it immediately to all users"""
     if not context.args or len(' '.join(context.args)) < 1:
         await update.message.reply_text(
             "Please provide a message to broadcast.\n"
@@ -111,11 +111,79 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config["broadcast_seen"] = {}  # Reset seen list for new broadcast
     save_config(config)
     
-    await update.message.reply_text(
-        "✅ Broadcast message activated!\n\n"
-        "Users will see this message next time they interact with the bot:\n\n"
-        f"📢 {message}"
+    # Send status message to admin
+    status_msg = await update.message.reply_text(
+        "📢 Broadcasting message to all users...\n"
+        "This may take some time depending on the number of users."
     )
+    
+    # Send message to all users immediately
+    try:
+        # Create counters for tracking
+        sent_count = 0
+        failed_count = 0
+        
+        # Get all chat IDs from context.application.chat_data
+        chat_ids = list(context.application.chat_data.keys())
+        
+        # Let admin know how many users will receive the broadcast
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=status_msg.message_id,
+            text=f"📢 Broadcasting message to {len(chat_ids)} users...\n"
+                 f"This may take some time."
+        )
+        
+        # Send to all users
+        for chat_id in chat_ids:
+            try:
+                # Skip sending to admin
+                if chat_id == update.effective_user.id:
+                    continue
+                    
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"📢 BROADCAST MESSAGE\n\n{message}"
+                )
+                
+                # Add user to seen list
+                if broadcast_id not in config["broadcast_seen"]:
+                    config["broadcast_seen"][broadcast_id] = []
+                config["broadcast_seen"][broadcast_id].append(str(chat_id))
+                
+                sent_count += 1
+                
+                # Update status every 20 users
+                if sent_count % 20 == 0:
+                    await context.bot.edit_message_text(
+                        chat_id=update.effective_chat.id,
+                        message_id=status_msg.message_id,
+                        text=f"📢 Broadcasting message...\n"
+                             f"Progress: {sent_count}/{len(chat_ids)} users"
+                    )
+                    
+            except Exception as e:
+                print(f"Failed to send broadcast to {chat_id}: {e}")
+                failed_count += 1
+        
+        # Save updated seen list
+        save_config(config)
+        
+        # Final update to admin
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=status_msg.message_id,
+            text=f"✅ Broadcast complete!\n\n"
+                 f"Successfully sent to: {sent_count} users\n"
+                 f"Failed: {failed_count} users"
+        )
+        
+    except Exception as e:
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=status_msg.message_id,
+            text=f"❌ Error sending broadcast: {str(e)}"
+        )
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle admin dashboard callbacks"""

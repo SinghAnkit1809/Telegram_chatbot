@@ -104,7 +104,7 @@ async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await send_join_prompt(update, context)
     
     # Check for broadcast
-    await check_and_show_broadcast(update, context)
+    #await check_and_show_broadcast(update, context)
     
     user_input = update.message.text
 
@@ -301,43 +301,85 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Add new function for status checking loop
 async def check_video_task_status_loop(context, task_id, chat_id, message_id, topic):
     """Continuously check video task status"""
-    while True:
-        task_status = task_queue.get_task_status(task_id)
-        status = task_status.get('status', 'not_found')
+    try:
+        max_attempts = 20  # Maximum number of attempts (10 minutes total with 30s interval)
+        attempts = 0
         
-        if status == 'completed':
-            video_bytes = task_status.get('result')
-            if video_bytes:
-                await context.bot.send_video(
-                    chat_id=chat_id,
-                    video=io.BytesIO(video_bytes),
-                    caption=f"✅ Your video about '{topic}' is ready!",
-                    supports_streaming=True
-                )
+        while attempts < max_attempts:
+            task_status = task_queue.get_task_status(task_id)
+            status = task_status.get('status', 'not_found')
+            
+            if status == 'completed':
+                video_data = task_status.get('result')
+                if video_data and isinstance(video_data, (bytes, bytearray)):
+                    try:
+                        # Send video with more detailed error handling
+                        await context.bot.send_video(
+                            chat_id=chat_id,
+                            video=io.BytesIO(video_data),
+                            caption=f"✅ Your video about '{topic}' is ready!",
+                            supports_streaming=True
+                        )
+                        await context.bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text="✅ Video generation completed!"
+                        )
+                        print(f"Video sent successfully for task {task_id}")
+                        return
+                    except Exception as e:
+                        print(f"Error sending video: {str(e)}")
+                        await context.bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=f"❌ Error sending video: {str(e)}"
+                        )
+                        return
+                else:
+                    print(f"Invalid video data received: {type(video_data)}")
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text="❌ Video generation failed: Invalid video data received"
+                    )
+                    return
+            
+            elif status == 'failed':
+                error = task_status.get('error', 'Unknown error')
                 await context.bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
-                    text="✅ Video generation completed!"
+                    text=f"❌ Video generation failed: {error}"
                 )
-            break
-        elif status == 'failed':
-            error = task_status.get('error', 'Unknown error')
+                return
+            
+            # Update progress message with attempt counter
+            attempts += 1
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
-                text=f"❌ Video generation failed: {error}"
+                text=f"🎥 Video generation in progress...\nTime elapsed: {attempts * 30} seconds"
             )
-            break
+            
+            await asyncio.sleep(30)
         
-        # Update progress message
+        # If we exit the loop without returning, we timed out
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            text=f"🎥 Video generation in progress..."
+            text="❌ Video generation timed out. Please try again."
         )
         
-        # Wait before next check
-        await asyncio.sleep(30)
+    except Exception as e:
+        print(f"Error in status check loop: {str(e)}")
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=f"❌ Error checking video status: {str(e)}"
+            )
+        except:
+            pass
 
 # Add new callback handler
 async def verify_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
