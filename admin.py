@@ -90,7 +90,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Broadcast a message to all users who have interacted with the bot"""
+    """Send broadcast message to the channel"""
     if not context.args or len(' '.join(context.args)) < 1:
         await update.message.reply_text(
             "Please provide a message to broadcast.\n"
@@ -99,24 +99,18 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     message = ' '.join(context.args)
+    channel_username = "@LunarckAI"  # Your channel username
     
-    # Create confirm buttons
-    confirm_buttons = [
-        [
-            InlineKeyboardButton("✅ Confirm & Send", callback_data="broadcast:confirm"),
-            InlineKeyboardButton("❌ Cancel", callback_data="broadcast:cancel")
-        ]
-    ]
-    
-    # Save the message in context for the callback
-    context.user_data['broadcast_message'] = message
-    
-    await update.message.reply_text(
-        f"📢 Broadcasting the following message to all users:\n\n"
-        f"{message}\n\n"
-        f"Confirm sending?",
-        reply_markup=InlineKeyboardMarkup(confirm_buttons)
-    )
+    try:
+        # Send message to channel
+        await context.bot.send_message(
+            chat_id=channel_username,
+            text=f"📢 BROADCAST MESSAGE\n\n{message}"
+        )
+        await update.message.reply_text("✅ Broadcast message sent to channel successfully!")
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed to send broadcast: {str(e)}")
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle admin dashboard callbacks"""
