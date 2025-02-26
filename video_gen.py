@@ -19,12 +19,11 @@ from task_queue import async_task
 
 class VideoGenerator:
     def __init__(self):
-        self.model = "openai"
-        self.width = 720
-        self.height = 1280
-        self.target_duration = 45
-        self.max_segment_duration = 4
+        # Reduce timeouts for better reliability
+        self.target_duration = 30
+        self.max_segment_duration = 3
         self.num_segments = math.ceil(self.target_duration / self.max_segment_duration)
+        self.timeout = 300  # 5 minutes total timeout
         self.speech_rate = "-10%"
 
     def download_image(self, prompt, seed, max_retries=3):
@@ -43,65 +42,79 @@ class VideoGenerator:
                 time.sleep(2)
                 continue
 
-    @async_task
+    @async_task  # This decorator now properly queues the task
     async def _generate_video_task(self, task_id, topic, progress_callback=None):
         """Main video generation workflow wrapped as a task"""
         try:
-            # Clear any existing memory
+            # Clear memory
             if hasattr(self, 'last_video'):
                 del self.last_video
             import gc; gc.collect()
             
-            with TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
-                # Your existing generation code here
-                # Story generation
-                if progress_callback:
-                    await progress_callback("📝 Crafting your story...")
-                story, segments = self._generate_story(topic)
-                
-                # Image generation
-                if progress_callback:
-                    await progress_callback("🎨 Creating visuals...")
-                image_prompts = self._create_image_prompts(story, segments)
-                images = []
-                
-                for i, prompt in enumerate(image_prompts):
-                    for attempt in range(3):
-                        try:
-                            seed = random.randint(1, 999999)
-                            image = self.download_image(prompt, seed)
-                            images.append(np.array(image))
-                            break
-                        except Exception as e:
-                            if attempt == 2:
-                                raise RuntimeError(f"Failed to generate image {i+1}: {str(e)}")
-                            await asyncio.sleep(1)
-                
-                # Audio generation
-                if progress_callback:
-                    await progress_callback("🔊 Recording narration...")
-                audio_path = await self._generate_audio(segments, temp_path)
-                
-                # Video compilation
-                if progress_callback:
-                    await progress_callback("🎥 Compiling final video...")
-                video_bytes = await self._compile_video(images, segments, audio_path, temp_path)
-                
-                return video_bytes
-                
+            async with asyncio.timeout(self.timeout):
+                with TemporaryDirectory() as temp_dir:
+                    temp_path = Path(temp_dir)
+                    
+                    # Story generation with timeout
+                    if progress_callback:
+                        await progress_callback("📝 Generating story...")
+                    story, segments = await asyncio.wait_for(
+                        asyncio.to_thread(self._generate_story, topic),
+                        timeout=60
+                    )
+                    
+                    # Generate image prompts
+                    image_prompts = await asyncio.wait_for(
+                        asyncio.to_thread(self._create_image_prompts, story, segments),
+                        timeout=60
+                    )
+                    
+                    # Image generation with timeouts
+                    if progress_callback:
+                        await progress_callback("🎨 Creating visuals...")
+                    
+                    images = []
+                    for i, prompt in enumerate(image_prompts):
+                        for attempt in range(3):
+                            try:
+                                seed = random.randint(1, 999999)
+                                image = await asyncio.wait_for(
+                                    asyncio.to_thread(self.download_image, prompt, seed),
+                                    timeout=30
+                                )
+                                images.append(np.array(image))
+                                break
+                            except asyncio.TimeoutError:
+                                if attempt == 2:
+                                    raise RuntimeError(f"Image generation timed out for segment {i+1}")
+                                await asyncio.sleep(2)
+                            except Exception as e:
+                                if attempt == 2:
+                                    raise RuntimeError(f"Failed to generate image {i+1}: {str(e)}")
+                                await asyncio.sleep(2)
+                    
+                    # Generate audio
+                    if progress_callback:
+                        await progress_callback("🎤 Creating audio...")
+                    audio_result = await self._generate_audio(segments, temp_path)
+                    
+                    # Compile final video
+                    if progress_callback:
+                        await progress_callback("🎥 Compiling video...")
+                    video_bytes = await self._compile_video(images, segments, audio_result, temp_path)
+                    
+                    return video_bytes
+                    
         except Exception as e:
             print(f"Video generation error: {str(e)}")
             raise RuntimeError(f"Video generation failed: {str(e)}")
 
     async def generate_video(self, topic, progress_callback=None):
         """Start async video generation and return task ID"""
-        # Generate unique task ID
         task_id = f"video_{int(time.time())}_{random.randint(1000, 9999)}"
         
-        # Start the generation task
-        self._generate_video_task(task_id, topic, progress_callback)
-        
+        # Queue the task and return ID immediately
+        await self._generate_video_task(task_id, topic, progress_callback)
         return task_id
 
     def _generate_story(self, topic):
@@ -145,7 +158,7 @@ class VideoGenerator:
                 split_at = remaining.rfind(break_point, 0, target_length + 50)
                 if split_at != -1:
                     segments.append(remaining[:split_at+1].strip())
-                    remaining = remaining[split_at+1:].strip()
+                    remaining = remaining[split_at+1:].trip()
                     break
             else:
                 last_space = remaining.rfind(' ', 0, target_length)
