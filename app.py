@@ -10,6 +10,7 @@ import os
 import random
 from image_gen import generate_image
 from video_gen import VideoGenerator
+import asyncio
 
 async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Check if user is member of required channel"""
@@ -232,9 +233,6 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
-    
-    # Check for broadcasts
-    #await check_and_show_broadcast(update, context)
 
     if not context.args:
         await update.message.reply_text("Please provide a story prompt after the command.\nExample: /video a magical forest adventure")
@@ -272,14 +270,15 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'submitted_at': time.time()
         }
         
-        # Schedule status check
-        context.job_queue.run_once(
-            check_video_task_status,
-            30,
-            data={
-                'task_id': task_id,
-                'user_id': update.effective_user.id
-            }
+        # Use asyncio.create_task instead of job_queue
+        asyncio.create_task(
+            check_video_task_status_loop(
+                context,
+                task_id=task_id,
+                chat_id=update.effective_chat.id,
+                message_id=status_msg.message_id,
+                topic=topic
+            )
         )
         
     except Exception as e:
@@ -289,63 +288,46 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=status_msg.message_id
         )
 
-async def check_video_task_status(context: ContextTypes.DEFAULT_TYPE):
-    """Check video generation task status and notify user"""
-    job_data = context.job.data
-    task_id = job_data['task_id']
-    user_id = job_data['user_id']
-    
-    # Get task info
-    user_data = context.dispatcher.user_data.get(user_id, {})
-    video_tasks = user_data.get('video_tasks', {})
-    task_info = video_tasks.get(task_id)
-    
-    if not task_info:
-        return
+# Add new function for status checking loop
+async def check_video_task_status_loop(context, task_id, chat_id, message_id, topic):
+    """Continuously check video task status"""
+    while True:
+        task_status = task_queue.get_task_status(task_id)
+        status = task_status.get('status', 'not_found')
         
-    # Check status
-    task_status = task_queue.get_task_status(task_id)
-    status = task_status.get('status', 'not_found')
-    
-    chat_id = task_info['chat_id']
-    message_id = task_info['message_id']
-    
-    if status == 'completed':
-        video_bytes = task_status.get('result')
-        if video_bytes:
-            await context.bot.send_video(
-                chat_id=chat_id,
-                video=io.BytesIO(video_bytes),
-                caption=f"✅ Your video about '{task_info['topic']}' is ready!",
-                supports_streaming=True
-            )
+        if status == 'completed':
+            video_bytes = task_status.get('result')
+            if video_bytes:
+                await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=io.BytesIO(video_bytes),
+                    caption=f"✅ Your video about '{topic}' is ready!",
+                    supports_streaming=True
+                )
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="✅ Video generation completed!"
+                )
+            break
+        elif status == 'failed':
+            error = task_status.get('error', 'Unknown error')
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
-                text="✅ Video generation completed!"
+                text=f"❌ Video generation failed: {error}"
             )
-            del video_tasks[task_id]
-    elif status == 'failed':
-        error = task_status.get('error', 'Unknown error')
+            break
+        
+        # Update progress message
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            text=f"❌ Video generation failed: {error}"
+            text=f"🎥 Video generation in progress..."
         )
-        del video_tasks[task_id]
-    else:
-        # Still processing, schedule another check
-        elapsed = time.time() - task_info['submitted_at']
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=f"🎥 Video generation in progress...\nElapsed time: {int(elapsed)}s"
-        )
-        context.job_queue.run_once(
-            check_video_task_status,
-            30,
-            data=job_data
-        )
+        
+        # Wait before next check
+        await asyncio.sleep(30)
 
 # Add new callback handler
 async def verify_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
