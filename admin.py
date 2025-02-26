@@ -1,6 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, ContextTypes, CallbackQueryHandler
 import json
+import time
 import os
 from functools import wraps
 
@@ -17,7 +18,9 @@ DEFAULT_CONFIG = {
         "model_switch": True
     },
     "broadcast_message": "",
-    "broadcast_active": False
+    "broadcast_active": False,
+    "broadcast_id": None,  # To track current broadcast
+    "broadcast_seen": {}  # To track which users have seen the broadcast
 }
 
 # Initialize or load config
@@ -90,7 +93,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send broadcast message to the channel"""
+    """Set up a new broadcast message"""
     if not context.args or len(' '.join(context.args)) < 1:
         await update.message.reply_text(
             "Please provide a message to broadcast.\n"
@@ -99,18 +102,20 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     message = ' '.join(context.args)
-    channel_username = "@LunarckAI"  # Your channel username
+    broadcast_id = str(int(time.time()))  # Generate unique broadcast ID
     
-    try:
-        # Send message to channel
-        await context.bot.send_message(
-            chat_id=channel_username,
-            text=f"📢 BROADCAST MESSAGE\n\n{message}"
-        )
-        await update.message.reply_text("✅ Broadcast message sent to channel successfully!")
-        
-    except Exception as e:
-        await update.message.reply_text(f"❌ Failed to send broadcast: {str(e)}")
+    config = get_config()
+    config["broadcast_message"] = message
+    config["broadcast_active"] = True
+    config["broadcast_id"] = broadcast_id
+    config["broadcast_seen"] = {}  # Reset seen list for new broadcast
+    save_config(config)
+    
+    await update.message.reply_text(
+        "✅ Broadcast message activated!\n\n"
+        "Users will see this message next time they interact with the bot:\n\n"
+        f"📢 {message}"
+    )
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle admin dashboard callbacks"""
@@ -198,18 +203,37 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 # Check for broadcasts and show to users
 async def check_and_show_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Check if there's an active broadcast and show it"""
-    # Skip showing broadcast to admin
+    """Check and show broadcast if user hasn't seen it"""
+    if not update.effective_user:
+        return
+        
+    user_id = str(update.effective_user.id)
+    
+    # Skip for admin
     if update.effective_user.username == ADMIN_USERNAME.replace("@", ""):
         return
-    
+        
     config = get_config()
+    current_broadcast_id = config.get("broadcast_id")
     
-    # If broadcast is active, show the message
-    if config.get("broadcast_active", False) and config.get("broadcast_message", ""):
-        await update.message.reply_text(
-            f"📢 ANNOUNCEMENT\n\n{config['broadcast_message']}"
-        )
+    if (config.get("broadcast_active") and 
+        config.get("broadcast_message") and 
+        current_broadcast_id):
+        
+        # Check if user has seen this broadcast
+        seen_users = config.get("broadcast_seen", {})
+        if user_id not in seen_users.get(current_broadcast_id, []):
+            # Show the broadcast
+            await update.message.reply_text(
+                f"📢 BROADCAST MESSAGE\n\n{config['broadcast_message']}"
+            )
+            
+            # Mark as seen
+            if current_broadcast_id not in seen_users:
+                seen_users[current_broadcast_id] = []
+            seen_users[current_broadcast_id].append(user_id)
+            config["broadcast_seen"] = seen_users
+            save_config(config)
 
 # Function to disable broadcasting
 @admin_only

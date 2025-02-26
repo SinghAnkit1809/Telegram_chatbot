@@ -47,7 +47,14 @@ async def send_join_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
-    await update.message.reply_text("Hello! I'm Luna chatbot. How can I assist you today?", reply_markup=ForceReply(selective=True))
+    
+    # Check for broadcast first
+    await check_and_show_broadcast(update, context)
+    
+    await update.message.reply_text(
+        "Hello! I'm Luna chatbot. How can I assist you today?",
+        reply_markup=ForceReply(selective=True)
+    )
 
 async def switch_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_membership(update, context):
@@ -95,6 +102,9 @@ async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
+    
+    # Check for broadcast
+    await check_and_show_broadcast(update, context)
     
     user_input = update.message.text
 
