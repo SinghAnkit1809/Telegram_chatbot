@@ -14,14 +14,12 @@ import numpy as np
 from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
 from tempfile import TemporaryDirectory
+import io
+from task_queue import async_task
 
 class VideoGenerator:
     def __init__(self):
         self.model = "openai"
-        # self.width = 1080
-        # self.height = 1920
-        # self.target_duration = 100
-        # self.max_segment_duration = 5
         self.width = 720
         self.height = 1280
         self.target_duration = 45
@@ -45,16 +43,18 @@ class VideoGenerator:
                 time.sleep(2)
                 continue
 
-    async def generate_video(self, topic, progress_callback=None):
-        """Main video generation workflow"""
-        # Clear any existing memory
-        if hasattr(self, 'last_video'):
-            del self.last_video
-        import gc; gc.collect()
-        
-        with TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            try:
+    @async_task  # Add decorator to make it run in task queue
+    async def _generate_video_task(self, task_id, topic, progress_callback=None):
+        """Main video generation workflow wrapped as a task"""
+        try:
+            # Clear any existing memory
+            if hasattr(self, 'last_video'):
+                del self.last_video
+            import gc; gc.collect()
+            
+            with TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                # Your existing generation code here
                 # Story generation
                 if progress_callback:
                     await progress_callback("📝 Crafting your story...")
@@ -90,8 +90,18 @@ class VideoGenerator:
                 
                 return video_bytes
                 
-            except Exception as e:
-                raise RuntimeError(f"Video generation failed: {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"Video generation failed: {str(e)}")
+
+    async def generate_video(self, topic, progress_callback=None):
+        """Start async video generation and return task ID"""
+        # Generate unique task ID
+        task_id = f"video_{int(time.time())}_{random.randint(1000, 9999)}"
+        
+        # Start the generation task
+        self._generate_video_task(task_id, topic, progress_callback)
+        
+        return task_id
 
     def _generate_story(self, topic):
         """Generate story segments with proper pacing"""
@@ -262,12 +272,9 @@ class VideoGenerator:
             temp_video_path = temp_path / "temp_video.mp4"
             final_clip.write_videofile(
                 str(temp_video_path),
-                # fps=24,
-                # threads=4,
                 fps=15,  # Reduced from 24
                 threads=2,  # Reduced from 4
                 preset='ultrafast',
-                # ffmpeg_params=['-movflags', '+faststart'],
                 ffmpeg_params=[
                     '-movflags', '+faststart',
                     '-vf', 'scale=720:1280',  # Force scale
@@ -291,24 +298,12 @@ class VideoGenerator:
             
         except Exception as e:
             raise RuntimeError(f"Video compilation failed: {str(e)}")
-        # finally:
-        #     if 'final_clip' in locals():
-        #         final_clip.close()
 
     def _add_captions(self, image_array, text):
         """Universal font size solution"""
         img = Image.fromarray(image_array)
         draw = ImageDraw.Draw(img)
 
-        # Attempt to load a font, fallback to default if not found
-        # try:
-        #     font = ImageFont.truetype("arialbd.ttf", size=80)
-        # except:
-        #     try:
-        #         font = ImageFont.truetype("Arial_Bold.ttf", size=80)
-        #     except:
-        #         font = ImageFont.load_default()  # Fallback to default font
-        
         # Dynamic font size based on video height (6% of screen height)
         base_font_size = int(self.height * 0.04)  # ~77px for 1280 height
         dynamic_font = None
@@ -319,8 +314,6 @@ class VideoGenerator:
             "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
             "arialbd.ttf", 
             "Arial_Bold.ttf",
-            # "DejaVuSans-Bold.ttf",  # Common Linux font
-            # "LiberationSans-Bold.ttf"  # Another common fallback
         ]
         
         for path in font_paths:
@@ -350,7 +343,6 @@ class VideoGenerator:
             lines.append(' '.join(current_line))
         
         # Calculate text block positioning
-        # line_height = font.getbbox("A")[3] - font.getbbox("A")[1]
         line_height = dynamic_font.getbbox("A")[3] - dynamic_font.getbbox("A")[1]
         total_height = len(lines) * (line_height + 10)
         y_position = (self.height // 2) + ((self.height // 2 - total_height) // 2) # Place near bottom with padding
@@ -361,7 +353,6 @@ class VideoGenerator:
         
         # Draw each line
         for line in lines:
-            # bbox = font.getbbox(line)
             bbox = dynamic_font.getbbox(line)
             text_width = bbox[2] - bbox[0]
             x_position = max(100, (self.width - text_width) // 2)
@@ -370,7 +361,6 @@ class VideoGenerator:
             draw.text(
                 (x_position, y_position),
                 line,
-                # font=font,
                 font=dynamic_font,
                 fill="#FFFF00",  # Text fill color
                 stroke_width=3,  # Outline width

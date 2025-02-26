@@ -90,7 +90,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set a broadcast message to be shown to all users"""
+    """Broadcast a message to all users who have interacted with the bot"""
     if not context.args or len(' '.join(context.args)) < 1:
         await update.message.reply_text(
             "Please provide a message to broadcast.\n"
@@ -169,16 +169,33 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if action == "confirm":
             message = context.user_data.get('broadcast_message', '')
             if message:
-                # Store the broadcast message in config
-                config["broadcast_message"] = message
-                config["broadcast_active"] = True
-                save_config(config)
-                
-                await query.edit_message_text(
-                    "✅ Broadcast message has been set and activated!\n\n"
-                    f"Message: \"{message}\"\n\n"
-                    "This message will be shown to all users when they interact with the bot."
-                )
+                # Get all known chat IDs from context.bot
+                try:
+                    # Send message to all users
+                    sent_count = 0
+                    failed_count = 0
+                    
+                    # You need to maintain a list of chat_ids of users who have interacted with your bot
+                    # This could be stored in a simple file or database
+                    # For example, from your bot's chat_data or application's chat list
+                    for chat_id in context.application.chat_data.keys():
+                        try:
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=f"📢 BROADCAST MESSAGE\n\n{message}"
+                            )
+                            sent_count += 1
+                        except Exception as e:
+                            print(f"Failed to send broadcast to {chat_id}: {e}")
+                            failed_count += 1
+                    
+                    await query.edit_message_text(
+                        f"✅ Broadcast sent!\n\n"
+                        f"Successfully sent to: {sent_count} users\n"
+                        f"Failed: {failed_count} users"
+                    )
+                except Exception as e:
+                    await query.edit_message_text(f"❌ Error sending broadcast: {str(e)}")
             else:
                 await query.edit_message_text("❌ No broadcast message found. Please try again.")
         

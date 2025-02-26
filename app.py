@@ -2,6 +2,9 @@
 from telegram import Update, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from admin import setup_admin_handlers, is_feature_enabled, check_and_show_broadcast
+from task_queue import task_queue, start_cleanup
+import time
+import io
 import requests
 import os
 import random
@@ -92,9 +95,6 @@ async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
     
-    # Check for broadcasts
-    await check_and_show_broadcast(update, context)
-
     user_input = update.message.text
 
     # Extract conversation history from the message if present
@@ -158,7 +158,7 @@ async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
     
-    await check_and_show_broadcast(update, context)
+    #await check_and_show_broadcast(update, context)
 
     """Handle /imagine command"""
     if not context.args:
@@ -225,6 +225,7 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text("Failed to generate image. Please try again.")
 
 async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /video command with async processing"""
     if not is_feature_enabled("video"):
         await update.message.reply_text("⚠️ Video generation is currently disabled by the administrator.")
         return
@@ -233,15 +234,19 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await send_join_prompt(update, context)
     
     # Check for broadcasts
-    await check_and_show_broadcast(update, context)
+    #await check_and_show_broadcast(update, context)
 
-    """Handle /video command"""
     if not context.args:
         await update.message.reply_text("Please provide a story prompt after the command.\nExample: /video a magical forest adventure")
         return
     
+    topic = ' '.join(context.args)
+    
     # Send initial status message
-    status_msg = await update.message.reply_text("🎥 Video generation started. This may take up to 5 minutes...")
+    status_msg = await update.message.reply_text(
+        "🎥 Video generation has been queued. You'll be notified when it's ready.\n"
+        "This may take several minutes."
+    )
     
     try:
         # Create progress callback
@@ -249,27 +254,32 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.edit_message_text(
                 chat_id=status_msg.chat_id,
                 message_id=status_msg.message_id,
-                text=f"{status_msg.text}\n\n{message}"
+                text=f"🎥 Video generation in progress...\n\n{message}"
             )
         
-        # Start generation
+        # Start generation and get task ID
         generator = VideoGenerator()
-        topic = ' '.join(context.args)
-        video_bytes = await generator.generate_video(topic, progress_update)
+        task_id = await generator.generate_video(topic, progress_update)
         
-        # Send video from memory
-        await context.bot.send_video(
-            chat_id=update.message.chat_id,
-            video=video_bytes,
-            caption="Here's your generated video!",
-            reply_to_message_id=update.message.message_id,
-            supports_streaming=True
-        )
+        # Store task info
+        if 'video_tasks' not in context.user_data:
+            context.user_data['video_tasks'] = {}
+            
+        context.user_data['video_tasks'][task_id] = {
+            'chat_id': update.effective_chat.id,
+            'message_id': status_msg.message_id,
+            'topic': topic,
+            'submitted_at': time.time()
+        }
         
-        # Delete status message
-        await context.bot.delete_message(
-            chat_id=status_msg.chat_id,
-            message_id=status_msg.message_id
+        # Schedule status check
+        context.job_queue.run_once(
+            check_video_task_status,
+            30,
+            data={
+                'task_id': task_id,
+                'user_id': update.effective_user.id
+            }
         )
         
     except Exception as e:
@@ -277,6 +287,64 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.delete_message(
             chat_id=status_msg.chat_id,
             message_id=status_msg.message_id
+        )
+
+async def check_video_task_status(context: ContextTypes.DEFAULT_TYPE):
+    """Check video generation task status and notify user"""
+    job_data = context.job.data
+    task_id = job_data['task_id']
+    user_id = job_data['user_id']
+    
+    # Get task info
+    user_data = context.dispatcher.user_data.get(user_id, {})
+    video_tasks = user_data.get('video_tasks', {})
+    task_info = video_tasks.get(task_id)
+    
+    if not task_info:
+        return
+        
+    # Check status
+    task_status = task_queue.get_task_status(task_id)
+    status = task_status.get('status', 'not_found')
+    
+    chat_id = task_info['chat_id']
+    message_id = task_info['message_id']
+    
+    if status == 'completed':
+        video_bytes = task_status.get('result')
+        if video_bytes:
+            await context.bot.send_video(
+                chat_id=chat_id,
+                video=io.BytesIO(video_bytes),
+                caption=f"✅ Your video about '{task_info['topic']}' is ready!",
+                supports_streaming=True
+            )
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text="✅ Video generation completed!"
+            )
+            del video_tasks[task_id]
+    elif status == 'failed':
+        error = task_status.get('error', 'Unknown error')
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"❌ Video generation failed: {error}"
+        )
+        del video_tasks[task_id]
+    else:
+        # Still processing, schedule another check
+        elapsed = time.time() - task_info['submitted_at']
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"🎥 Video generation in progress...\nElapsed time: {int(elapsed)}s"
+        )
+        context.job_queue.run_once(
+            check_video_task_status,
+            30,
+            data=job_data
         )
 
 # Add new callback handler
@@ -293,7 +361,14 @@ if __name__ == "__main__":
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable missing!")
+    
+    # Start the task queue (already started on import, but explicit here)
+    task_queue.start()
+
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Start the cleanup task
+    start_cleanup()
     
     # Add verification handler first
     app.add_handler(CallbackQueryHandler(verify_join_callback, pattern='^verify_join$'))
@@ -313,4 +388,8 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("video", video))
     
     print("Bot is running...")
-    app.run_polling()
+    try:
+        app.run_polling()
+    finally:
+        # Make sure to stop the task queue when the bot stops
+        task_queue.stop()
