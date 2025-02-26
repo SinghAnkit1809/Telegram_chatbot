@@ -1,6 +1,7 @@
 #telegram bot app.py
 from telegram import Update, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from admin import setup_admin_handlers, is_feature_enabled, check_and_show_broadcast
 import requests
 import os
 import random
@@ -84,8 +85,16 @@ async def handle_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
 async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_feature_enabled("chat"):
+        await update.message.reply_text("⚠️ Chat functionality is currently disabled by the administrator.")
+        return
+        
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
+    
+    # Check for broadcasts
+    await check_and_show_broadcast(update, context)
+
     user_input = update.message.text
 
     # Extract conversation history from the message if present
@@ -141,8 +150,16 @@ async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(bot_response, reply_markup=ForceReply(selective=True))
 
 async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not is_feature_enabled("imagine"):
+        await update.message.reply_text("⚠️ Image generation is currently disabled by the administrator.")
+        return
+    
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
+    
+    await check_and_show_broadcast(update, context)
+
     """Handle /imagine command"""
     if not context.args:
         await update.message.reply_text("Please provide a prompt after the command.\nExample: /imagine a sunset")
@@ -208,8 +225,16 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text("Failed to generate image. Please try again.")
 
 async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_feature_enabled("video"):
+        await update.message.reply_text("⚠️ Video generation is currently disabled by the administrator.")
+        return
+        
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
+    
+    # Check for broadcasts
+    await check_and_show_broadcast(update, context)
+
     """Handle /video command"""
     if not context.args:
         await update.message.reply_text("Please provide a story prompt after the command.\nExample: /video a magical forest adventure")
@@ -272,6 +297,9 @@ if __name__ == "__main__":
     
     # Add verification handler first
     app.add_handler(CallbackQueryHandler(verify_join_callback, pattern='^verify_join$'))
+
+    # Set up admin handlers
+    setup_admin_handlers(app)
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("model", switch_model))
