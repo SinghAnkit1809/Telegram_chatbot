@@ -93,7 +93,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set up a new broadcast message and send it immediately to all users"""
+    """Send broadcast message immediately to all users without tracking"""
     if not context.args or len(' '.join(context.args)) < 1:
         await update.message.reply_text(
             "Please provide a message to broadcast.\n"
@@ -102,14 +102,6 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     message = ' '.join(context.args)
-    broadcast_id = str(int(time.time()))  # Generate unique broadcast ID
-    
-    config = get_config()
-    config["broadcast_message"] = message
-    config["broadcast_active"] = True
-    config["broadcast_id"] = broadcast_id
-    config["broadcast_seen"] = {}  # Reset seen list for new broadcast
-    save_config(config)
     
     # Send status message to admin
     status_msg = await update.message.reply_text(
@@ -146,11 +138,6 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=f"📢 BROADCAST MESSAGE\n\n{message}"
                 )
                 
-                # Add user to seen list
-                if broadcast_id not in config["broadcast_seen"]:
-                    config["broadcast_seen"][broadcast_id] = []
-                config["broadcast_seen"][broadcast_id].append(str(chat_id))
-                
                 sent_count += 1
                 
                 # Update status every 20 users
@@ -165,9 +152,6 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"Failed to send broadcast to {chat_id}: {e}")
                 failed_count += 1
-        
-        # Save updated seen list
-        save_config(config)
         
         # Final update to admin
         await context.bot.edit_message_text(
