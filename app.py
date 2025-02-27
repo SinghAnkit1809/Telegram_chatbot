@@ -234,35 +234,76 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=InlineKeyboardMarkup([model_buttons[i:i+2] for i in range(0, len(model_buttons), 2)])
         )
     elif query.data.startswith('model:'):
-        # Generate image with all parameters
-        model = query.data.split(':')[1]
-        prompt = context.user_data['image_prompt']
-        width, height = context.user_data['image_size']
-        # Show processing message
-        await query.edit_message_text(
-            "🎨 Generating your image...",
-            reply_markup=None
-        )
-        
-        image_url = generate_image(
-            prompt=prompt,
-            width=width,
-            height=height,
-            model=model,
-            seed=random.randint(0, 1000000)
-        )
-        
-        if image_url:
-            # Remove buttons from both messages
-            await query.edit_message_reply_markup(reply_markup=None)
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=image_url,
-                caption=f"🖼️ {prompt}\nModel: {model} | Size: {width}x{height}"
+        try:
+            model = query.data.split(':')[1]
+            prompt = context.user_data['image_prompt']
+            width, height = context.user_data['image_size']
+            
+            await query.edit_message_text(
+                text="🎨 Generating your image...",
+                reply_markup=None
             )
-        else:
-            await query.edit_message_text("Failed to generate image. Please try again.")
-
+            
+            print(f"Generating image with params: prompt={prompt}, width={width}, height={height}, model={model}")
+            
+            image_url = generate_image(
+                prompt=prompt,
+                width=int(width),
+                height=int(height),
+                model=model,
+                seed=random.randint(0, 1000000)
+            )
+            
+            print(f"Generated image URL: {image_url}")
+            
+            if image_url:
+                # First try to download the image to verify it's accessible
+                try:
+                    img_response = requests.get(image_url, timeout=20)
+                    img_response.raise_for_status()
+                    
+                    # Then send it as a file buffer (more reliable than URL)
+                    await context.bot.send_photo(
+                        chat_id=query.message.chat_id,
+                        photo=io.BytesIO(img_response.content),
+                        caption=f"🖼️ {prompt}\nModel: {model} | Size: {width}x{height}"
+                    )
+                    
+                    # Update status afterward
+                    await query.edit_message_text(
+                        text="✅ Image generated successfully!",
+                        reply_markup=None
+                    )
+                    
+                except requests.exceptions.RequestException as e:
+                    # Handle download error
+                    print(f"Error downloading image: {str(e)}")
+                    await query.edit_message_text(
+                        text=f"❌ Error downloading image: Image URL inaccessible",
+                        reply_markup=None
+                    )
+                    
+                except Exception as e:
+                    # Handle sending error
+                    print(f"Error sending image: {str(e)}")
+                    # Try sending just the URL as a fallback
+                    await query.edit_message_text(
+                        text=f"✅ Image generated! View here: {image_url}\n\nModel: {model} | Size: {width}x{height}",
+                        reply_markup=None
+                    )
+                    
+            else:
+                await query.edit_message_text(
+                    text="❌ Failed to generate image. Please try again.",
+                    reply_markup=None
+                )
+                
+        except Exception as e:
+            print(f"Error in image generation: {str(e)}")
+            await query.edit_message_text(
+                text=f"❌ Error generating image: {str(e)}",
+                reply_markup=None
+            )
 async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_feature_enabled("video"):
         await update.message.reply_text("⚠️ Video generation is currently disabled.")
@@ -341,6 +382,12 @@ async def check_video_task_status_loop(context, task_id, chat_id, message_id, to
                 video_data = task_status.get('result')
                 if video_data and isinstance(video_data, (bytes, bytearray)):
                     try:
+                        await context.bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text="✅ Video generation completed! Sending video now..."
+                        )
+                        video_stream = io.BytesIO(video_data)
                         # Send video with more detailed error handling
                         await context.bot.send_video(
                             chat_id=chat_id,
@@ -348,13 +395,18 @@ async def check_video_task_status_loop(context, task_id, chat_id, message_id, to
                             caption=f"✅ Your video about '{topic}' is ready!",
                             supports_streaming=True
                         )
-                        await context.bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=message_id,
-                            text="✅ Video generation completed!"
-                        )
+                        try:
+                            await context.bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=message_id,
+                                text="✅ Video generation and delivery completed!"
+                            )
+                        except Exception as update_error:
+                            print(f"Non-critical status update error: {str(update_error)}")
+                            
                         print(f"Video sent successfully for task {task_id}")
                         return
+                        
                     except Exception as e:
                         print(f"Error sending video: {str(e)}")
                         await context.bot.edit_message_text(
