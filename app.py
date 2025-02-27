@@ -11,6 +11,27 @@ import random
 from image_gen import generate_image
 from video_gen import VideoGenerator
 import asyncio
+import json
+
+def get_config():
+    try:
+        with open('admin_config.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # Use the default structure from admin.py
+        return {
+            "features": {
+                "chat": True,
+                "imagine": True,
+                "video": True,
+                "model_switch": True
+            },
+            "broadcast_message": "",
+            "broadcast_active": False,
+            "broadcast_id": None,
+            "broadcast_seen": {}
+        }
+
 
 async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Check if user is member of required channel"""
@@ -45,13 +66,20 @@ async def send_join_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.application.bot_data.setdefault("registered_chats", set()).add(update.effective_chat.id)
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
     
-    await update.message.reply_text(
-        "Hello! I'm Luna chatbot. How can I assist you today?",
-        reply_markup=ForceReply(selective=True)
-    )
+    # Send welcome message
+    await update.message.reply_text("Hello! I'm Luna chatbot. How can I assist you today?")
+    
+    # Check if there's an active broadcast message
+    config = get_config()
+    if config.get("broadcast_active") and config.get("broadcast_message"):
+        await update.message.reply_text(
+            f"📢 BROADCAST MESSAGE\n\n{config['broadcast_message']}"
+        )
+
 
 async def switch_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_membership(update, context):
@@ -93,6 +121,7 @@ async def handle_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
 async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.application.bot_data.setdefault("registered_chats", set()).add(update.effective_chat.id)
     if not is_feature_enabled("chat"):
         await update.message.reply_text("⚠️ Chat functionality is currently disabled.")
         return
@@ -209,6 +238,11 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
         model = query.data.split(':')[1]
         prompt = context.user_data['image_prompt']
         width, height = context.user_data['image_size']
+        # Show processing message
+        await query.edit_message_text(
+            "🎨 Generating your image...",
+            reply_markup=None
+        )
         
         image_url = generate_image(
             prompt=prompt,
@@ -230,16 +264,18 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text("Failed to generate image. Please try again.")
 
 async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /video command with async processing"""
     if not is_feature_enabled("video"):
-        await update.message.reply_text("⚠️ Video generation is currently disabled by the administrator.")
+        await update.message.reply_text("⚠️ Video generation is currently disabled.")
         return
         
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
 
     if not context.args:
-        await update.message.reply_text("Please provide a story prompt after the command.\nExample: /video a magical forest adventure")
+        await update.message.reply_text(
+            "Please provide a story prompt after the command.\n"
+            "Example: /video a magical forest adventure"
+        )
         return
     
     topic = ' '.join(context.args)
@@ -247,34 +283,34 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send initial status message
     status_msg = await update.message.reply_text(
         "🎥 Video generation has been queued. You'll be notified when it's ready.\n"
-        "This may take several minutes."
+        "You can continue using other bot features while your video is being generated."
     )
     
     try:
         # Create progress callback
         async def progress_update(message):
-            await context.bot.edit_message_text(
-                chat_id=status_msg.chat_id,
-                message_id=status_msg.message_id,
-                text=f"🎥 Video generation in progress...\n\n{message}"
-            )
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=status_msg.chat_id,
+                    message_id=status_msg.message_id,
+                    text=f"🎥 Video generation in progress...\n\n{message}"
+                )
+            except Exception as e:
+                print(f"Progress update error: {e}")
         
-        # Start generation and get task ID
+        # Initialize generator and start task
         generator = VideoGenerator()
-        task_id = await generator.generate_video(topic, progress_update)
+        # Generate a unique task ID
+        task_id = f"video_{int(time.time())}_{random.randint(1000, 9999)}"
         
-        # Store task info
-        if 'video_tasks' not in context.user_data:
-            context.user_data['video_tasks'] = {}
-            
-        context.user_data['video_tasks'][task_id] = {
-            'chat_id': update.effective_chat.id,
-            'message_id': status_msg.message_id,
-            'topic': topic,
-            'submitted_at': time.time()
-        }
+        # Call _generate_video_task with task_id as a keyword argument
+        task_id = await generator._generate_video_task(
+            topic=topic,
+            progress_callback=progress_update,
+            task_id=task_id
+        )
         
-        # Use asyncio.create_task instead of job_queue
+        # Start monitoring task status
         asyncio.create_task(
             check_video_task_status_loop(
                 context,
@@ -286,11 +322,9 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     except Exception as e:
-        await update.message.reply_text(f"❌ Video generation failed: {str(e)}")
-        await context.bot.delete_message(
-            chat_id=status_msg.chat_id,
-            message_id=status_msg.message_id
-        )
+        error_msg = f"❌ Video generation failed: {str(e)}"
+        print(error_msg)
+        await update.message.reply_text(error_msg)
 
 # Add new function for status checking loop
 async def check_video_task_status_loop(context, task_id, chat_id, message_id, topic):
@@ -390,34 +424,33 @@ if __name__ == "__main__":
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable missing!")
     
-    # Start the task queue (already started on import, but explicit here)
-    task_queue.start()
-
+    # Initialize asyncio loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Start the task queue
+    loop.run_until_complete(task_queue.start())
+    
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Start the cleanup task
-    start_cleanup()
+    # Start the cleanup task with the loop
+    start_cleanup(loop)
     
-    # Add verification handler first
+    # Add handlers
     app.add_handler(CallbackQueryHandler(verify_join_callback, pattern='^verify_join$'))
-
-    # Set up admin handlers
     setup_admin_handlers(app)
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("model", switch_model))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_with_bot))
     app.add_handler(CommandHandler("imagine", imagine))
-    
-    # Fix handler order - specific patterns first!
     app.add_handler(CallbackQueryHandler(handle_model_callback, pattern='^chatmodel:'))
     app.add_handler(CallbackQueryHandler(handle_image_callback))
-    
     app.add_handler(CommandHandler("video", video))
     
     print("Bot is running...")
     try:
         app.run_polling()
     finally:
-        # Make sure to stop the task queue when the bot stops
-        task_queue.stop()
+        # Cleanup
+        loop.run_until_complete(task_queue.stop())
+        loop.close()

@@ -1,167 +1,109 @@
 import asyncio
-import threading
-import queue
-import time
-from functools import wraps
 import logging
-from typing import Dict, Any, Callable, Coroutine, Optional, List
-
-# Set up logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger("TaskQueue")
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 class TaskQueue:
-    """A queue system for handling long-running tasks asynchronously"""
-    
-    def __init__(self, max_workers: int = 3):
-        self.task_queue = queue.Queue()
+    def __init__(self, max_workers: int = 2):
+        self.video_queue = asyncio.Queue()
         self.results = {}
         self.max_workers = max_workers
         self.workers = []
         self.running = False
-        self.lock = threading.Lock()
-    
-    def start(self):
-        """Start the worker threads"""
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.video_tasks = set()
+
+    async def start(self):
         if self.running:
             return
-        
         self.running = True
-        
-        # Create worker threads
-        for i in range(self.max_workers):
-            worker = threading.Thread(target=self._worker_loop, args=(i,), daemon=True)
-            worker.start()
+        for _ in range(self.max_workers):
+            worker = asyncio.create_task(self._worker())
             self.workers.append(worker)
-        
-        logger.info(f"Started {self.max_workers} worker threads")
-    
-    def stop(self):
-        """Stop the worker threads"""
+
+    async def stop(self):
         self.running = False
-        
-        # Wait for all workers to finish
         for worker in self.workers:
-            worker.join(timeout=1.0)
-        
-        logger.info("All worker threads stopped")
-    
-    def _worker_loop(self, worker_id: int):
-        """Main worker loop that processes tasks from the queue"""
-        logger.info(f"Worker {worker_id} started")
-        
+            worker.cancel()
+        self.workers.clear()
+        await self.video_queue.join()
+
+    async def _worker(self):
         while self.running:
             try:
-                # Get a task from the queue with a timeout so we can check if we should stop
-                task_id, task_func, args, kwargs = self.task_queue.get(timeout=1.0)
-                
-                logger.info(f"Worker {worker_id} processing task {task_id}")
-                
+                task_id, coro, args, kwargs = await self.video_queue.get()
                 try:
-                    # Execute the task
-                    result = task_func(*args, **kwargs)
-                    
-                    # Store the result
-                    with self.lock:
-                        self.results[task_id] = {
-                            "status": "completed",
-                            "result": result,
-                            "error": None,
-                            "completed_at": time.time()
-                        }
+                    result = await coro(*args, **kwargs)
+                    self.results[task_id] = {
+                        "status": "completed",
+                        "result": result,
+                        "error": None,
+                        "completed_at": time.time()
+                    }
                 except Exception as e:
-                    logger.error(f"Error in task {task_id}: {str(e)}")
-                    
-                    # Store the error
-                    with self.lock:
-                        self.results[task_id] = {
-                            "status": "failed",
-                            "result": None,
-                            "error": str(e),
-                            "completed_at": time.time()
-                        }
-                
-                # Mark the task as done
-                self.task_queue.task_done()
-                
-            except queue.Empty:
-                # No tasks in the queue, just continue
-                pass
+                    self.results[task_id] = {
+                        "status": "failed",
+                        "result": None,
+                        "error": str(e),
+                        "completed_at": time.time()
+                    }
+                finally:
+                    self.video_queue.task_done()
+                    if task_id in self.video_tasks:
+                        self.video_tasks.remove(task_id)
+            except asyncio.CancelledError:
+                break
             except Exception as e:
-                logger.error(f"Unexpected error in worker {worker_id}: {str(e)}")
-        
-        logger.info(f"Worker {worker_id} stopped")
-    
-    def add_task(self, task_id: str, task_func: Callable, *args, **kwargs) -> str:
-        """Add a task to the queue and return its ID"""
-        with self.lock:
-            self.results[task_id] = {
-                "status": "pending",
-                "result": None,
-                "error": None,
-                "created_at": time.time()
-            }
-        
-        # Add the task to the queue
-        self.task_queue.put((task_id, task_func, args, kwargs))
-        
-        logger.info(f"Added task {task_id} to the queue")
+                logging.error(f"Worker error: {e}")
+                await asyncio.sleep(1)
+
+    async def add_task(self, task_id: str, coro, *args, **kwargs):
+        self.video_tasks.add(task_id)
+        await self.video_queue.put((task_id, coro, args, kwargs))
         return task_id
-    
-    def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """Get the status of a task"""
-        with self.lock:
-            if task_id in self.results:
-                return self.results[task_id]
-            else:
-                return {"status": "not_found"}
-    
-    def clear_completed_tasks(self, max_age: float = 3600.0):
-        """Clear completed tasks older than max_age seconds"""
-        now = time.time()
-        with self.lock:
-            to_remove = []
-            for task_id, task_data in self.results.items():
-                if task_data["status"] in ["completed", "failed"]:
-                    completed_at = task_data.get("completed_at", 0)
-                    if now - completed_at > max_age:
-                        to_remove.append(task_id)
-            
-            for task_id in to_remove:
-                del self.results[task_id]
-            
-            if to_remove:
-                logger.info(f"Cleared {len(to_remove)} completed tasks")
+
+    def get_task_status(self, task_id: str):
+        if task_id in self.video_tasks:
+            return {"status": "processing"}
+        return self.results.get(task_id, {"status": "not_found"})
 
 # Global task queue instance
-task_queue = TaskQueue(max_workers=3)
+task_queue = TaskQueue(max_workers=2)
 
-# Start the queue when the module is imported
-task_queue.start()
-
-# Background task that periodically cleans up old tasks
-async def cleanup_task():
-    """Periodically clean up old tasks"""
-    while True:
-        task_queue.clear_completed_tasks()
-        await asyncio.sleep(3600)  # Run every hour
-
-# Function to start the cleanup task
-def start_cleanup():
-    """Start the cleanup task"""
-    loop = asyncio.get_event_loop()
-    loop.create_task(cleanup_task())
-
-# Decorator for creating asynchronous tasks
+# def async_task(func):   
+#     async def wrapper(*args, **kwargs):
+#         task_id = kwargs.get('task_id') or f"{func.__name__}_{time.time()}"
+#         await task_queue.add_task(task_id, func, *args, **kwargs)
+#         return task_id
+#     return wrapper
 def async_task(func):
-    """Decorator to run a function as an asynchronous task"""
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # Generate a unique task ID
-        task_id = f"{func.__name__}_{time.time()}"
-        
-        # Add the task to the queue
-        task_queue.add_task(task_id, func, *args, **kwargs)
-        
+    async def wrapper(*args, **kwargs):
+        # Remove task_id from kwargs to avoid duplicate passing
+        task_id = kwargs.pop('task_id', f"{func.__name__}_{time.time()}")
+        await task_queue.add_task(task_id, func, *args, **kwargs)
         return task_id
     return wrapper
+
+
+async def cleanup_old_results():
+    while True:
+        try:
+            current_time = time.time()
+            cutoff_time = current_time - 3600  # 1 hour
+            for task_id in list(task_queue.results.keys()):
+                result = task_queue.results[task_id]
+                if result.get('completed_at', 0) < cutoff_time:
+                    del task_queue.results[task_id]
+            await asyncio.sleep(300)  # Run every 5 minutes
+        except Exception as e:
+            logging.error(f"Cleanup error: {e}")
+            await asyncio.sleep(60)
+
+def start_cleanup(loop=None):
+    """Start the cleanup task with an optional event loop"""
+    if loop is None:
+        loop = asyncio.get_event_loop()
+    loop.create_task(cleanup_old_results())
+
+# Export the cleanup function
+__all__ = ['task_queue', 'start_cleanup', 'async_task']

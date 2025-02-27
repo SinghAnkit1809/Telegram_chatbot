@@ -1,0 +1,12 @@
+{
+    "features": {
+        "chat": true,
+        "imagine": true,
+        "video": true,
+        "model_switch": true
+    },
+    "broadcast_message": "hello everyone!",
+    "broadcast_active": false,
+    "broadcast_id": "1740632547.8882165",
+    "broadcast_seen": {}
+}

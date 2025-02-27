@@ -26,18 +26,25 @@ DEFAULT_CONFIG = {
 
 # Initialize or load config
 def get_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error loading config: {e}")
-            return DEFAULT_CONFIG
-    else:
-        # Create default config
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(DEFAULT_CONFIG, f, indent=4)
-        return DEFAULT_CONFIG
+    try:
+        with open('admin_config.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # Use the default structure from admin.py
+        return {
+            "features": {
+                "chat": True,
+                "imagine": True,
+                "video": True,
+                "model_switch": True
+            },
+            "broadcast_message": "",
+            "broadcast_active": False,
+            "broadcast_id": None,
+            "broadcast_seen": {}
+        }
+
+
 
 # Save config
 def save_config(config):
@@ -94,49 +101,29 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send broadcast message immediately to all users"""
     if not context.args:
         await update.message.reply_text(
-            "Please provide a message to broadcast.\n"
-            "Example: /broadcast Hello everyone!"
+            "Please provide a message to broadcast.\nExample: /broadcast Hello everyone!"
         )
         return
     
     message = ' '.join(context.args)
-    status_msg = await update.message.reply_text("📢 Broadcasting message...")
+    registered_chats = context.application.bot_data.get("registered_chats", set())
     
-    try:
-        sent_count = 0
-        failed_count = 0
-        
-        # Get all chat IDs from bot's chat data
-        chat_ids = set(context.application.chat_data.keys())
-        
-        for chat_id in chat_ids:
-            try:
-                # Skip sending to admin
-                if str(chat_id) == str(update.effective_user.id):
-                    continue
-                
-                # Direct send without checking or storing
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"📢 BROADCAST MESSAGE\n\n{message}",
-                    parse_mode='HTML'
-                )
-                sent_count += 1
-                await asyncio.sleep(0.1)  # Prevent rate limiting
-                
-            except Exception as e:
-                print(f"Failed to send to {chat_id}: {e}")
-                failed_count += 1
-        
-        await status_msg.edit_text(
-            f"✅ Broadcast complete!\nSent: {sent_count}\nFailed: {failed_count}"
-        )
-        
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Broadcast failed: {str(e)}")
+    sent_count = 0
+    failed_count = 0
+    for chat_id in registered_chats:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=message)
+            sent_count += 1
+        except Exception as e:
+            print(f"Failed to send broadcast to {chat_id}: {e}")
+            failed_count += 1
+    
+    await update.message.reply_text(
+        f"Broadcast complete. Sent: {sent_count} chats, Failed: {failed_count} chats."
+    )
+
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle admin dashboard callbacks"""

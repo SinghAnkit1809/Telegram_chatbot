@@ -13,18 +13,22 @@ from io import BytesIO
 import numpy as np
 from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, gettempdir
 import io
 from task_queue import async_task
 
 class VideoGenerator:
     def __init__(self):
-        # Reduce timeouts for better reliability
-        self.target_duration = 30
-        self.max_segment_duration = 3
+        self.width = 720
+        self.height = 1280
+        self.target_duration = 45  # Changed from 30 to 45
+        self.max_segment_duration = 4  # Changed from 3 to 4
         self.num_segments = math.ceil(self.target_duration / self.max_segment_duration)
-        self.timeout = 300  # 5 minutes total timeout
         self.speech_rate = "-10%"
+        self.model = "mistral-large"
+        # Create output directory
+        self.output_dir = Path("generated_videos")
+        self.output_dir.mkdir(exist_ok=True)
 
     def download_image(self, prompt, seed, max_retries=3):
         """Download image from pollinations.ai with proper error handling"""
@@ -42,72 +46,57 @@ class VideoGenerator:
                 time.sleep(2)
                 continue
 
-    @async_task  # This decorator now properly queues the task
-    async def _generate_video_task(self, task_id, topic, progress_callback=None):
-        """Main video generation workflow wrapped as a task"""
-        try:
-            # Clear memory
-            if hasattr(self, 'last_video'):
-                del self.last_video
-            import gc; gc.collect()
-            
-            async with asyncio.timeout(self.timeout):
-                with TemporaryDirectory() as temp_dir:
-                    temp_path = Path(temp_dir)
-                    
-                    # Story generation with timeout
-                    if progress_callback:
-                        await progress_callback("📝 Generating story...")
-                    story, segments = await asyncio.wait_for(
-                        asyncio.to_thread(self._generate_story, topic),
-                        timeout=60
-                    )
-                    
-                    # Generate image prompts
-                    image_prompts = await asyncio.wait_for(
-                        asyncio.to_thread(self._create_image_prompts, story, segments),
-                        timeout=60
-                    )
-                    
-                    # Image generation with timeouts
-                    if progress_callback:
-                        await progress_callback("🎨 Creating visuals...")
-                    
-                    images = []
-                    for i, prompt in enumerate(image_prompts):
-                        for attempt in range(3):
-                            try:
-                                seed = random.randint(1, 999999)
-                                image = await asyncio.wait_for(
-                                    asyncio.to_thread(self.download_image, prompt, seed),
-                                    timeout=30
-                                )
-                                images.append(np.array(image))
-                                break
-                            except asyncio.TimeoutError:
-                                if attempt == 2:
-                                    raise RuntimeError(f"Image generation timed out for segment {i+1}")
-                                await asyncio.sleep(2)
-                            except Exception as e:
-                                if attempt == 2:
-                                    raise RuntimeError(f"Failed to generate image {i+1}: {str(e)}")
-                                await asyncio.sleep(2)
-                    
-                    # Generate audio
-                    if progress_callback:
-                        await progress_callback("🎤 Creating audio...")
-                    audio_result = await self._generate_audio(segments, temp_path)
-                    
-                    # Compile final video
-                    if progress_callback:
-                        await progress_callback("🎥 Compiling video...")
-                    video_bytes = await self._compile_video(images, segments, audio_result, temp_path)
-                    
-                    return video_bytes
-                    
-        except Exception as e:
-            print(f"Video generation error: {str(e)}")
-            raise RuntimeError(f"Video generation failed: {str(e)}")
+    @async_task
+    async def _generate_video_task(self, topic, progress_callback=None, task_id=None):
+        if hasattr(self, 'last_video'):
+            del self.last_video
+        import gc; gc.collect()
+        
+        with TemporaryDirectory(dir=gettempdir()) as temp_dir:
+            temp_path = Path(temp_dir)
+            try:
+                if progress_callback:
+                    await progress_callback("📝 Crafting your story...")
+                story, segments = await asyncio.to_thread(self._generate_story, topic)
+                
+                if progress_callback:
+                    await progress_callback("🎨 Creating visuals...")
+                image_prompts = self._create_image_prompts(story, segments)
+                images = []
+                for i, prompt in enumerate(image_prompts):
+                    for attempt in range(3):
+                        try:
+                            seed = random.randint(1, 999999)
+                            image = await asyncio.to_thread(self.download_image, prompt, seed)
+                            images.append(np.array(image))
+                            del image
+                            break
+                        except Exception as e:
+                            if attempt == 2:
+                                raise RuntimeError(f"Failed to generate image {i+1}: {str(e)}")
+                            await asyncio.sleep(1)
+                
+                if progress_callback:
+                    await progress_callback("🔊 Recording narration...")
+                audio_result = await self._generate_audio(segments, temp_path)
+                
+                if progress_callback:
+                    await progress_callback("🎥 Compiling final video...")
+                # Offload the compilation to a separate thread
+                video_bytes = await asyncio.to_thread(self._compile_video, images, segments, audio_result, temp_path)
+                
+                # Return the video bytes directly (no persistent saving)
+                return video_bytes.getvalue()
+            except Exception as e:
+                print(f"Video generation error: {str(e)}")
+                raise RuntimeError(f"Video generation failed: {str(e)}")
+            finally:
+                # Cleanup temporary files in temp_path
+                try:
+                    for f in temp_path.glob("*"):
+                        f.unlink()
+                except Exception:
+                    pass
 
     async def generate_video(self, topic, progress_callback=None):
         """Start async video generation and return task ID"""
@@ -149,30 +138,76 @@ class VideoGenerator:
 
     def _split_text(self, text):
         """Split text into well-paced segments"""
+        # Clean and normalize text first
+        text = text.strip()
+        if not text:
+            return [], ""
+            
         segments = []
-        remaining = text
+        story = text
         target_length = len(text) // self.num_segments
         
-        while remaining and len(segments) < self.num_segments:
-            for break_point in ['. ', '! ', '? ', '; ', ', ']:
-                split_at = remaining.rfind(break_point, 0, target_length + 50)
-                if split_at != -1:
-                    segments.append(remaining[:split_at+1].strip())
-                    remaining = remaining[split_at+1:].trip()
-                    break
-            else:
-                last_space = remaining.rfind(' ', 0, target_length)
-                if last_space != -1:
-                    segments.append(remaining[:last_space].strip())
-                    remaining = remaining[last_space:].strip()
-                else:
-                    segments.append(remaining[:target_length].strip())
-                    remaining = remaining[target_length:].strip()
+        # Split by sentences first
+        sentences = [s.strip() for s in text.split('.') if s.strip()]
+        current_segment = []
+        current_length = 0
         
-        if remaining and segments:
-            segments[-1] += " " + remaining
+        for sentence in sentences:
+            sentence = sentence.strip() + "."  # Add back the period
+            if current_length + len(sentence) <= target_length or not current_segment:
+                current_segment.append(sentence)
+                current_length += len(sentence)
+            else:
+                segments.append(" ".join(current_segment))
+                current_segment = [sentence]
+                current_length = len(sentence)
+        
+        # Add any remaining segment
+        if current_segment:
+            segments.append(" ".join(current_segment))
+        
+        # If we need more segments, split the longest ones
+        while len(segments) < self.num_segments and any(len(s) > target_length for s in segments):
+            # Find longest segment
+            longest_idx = max(range(len(segments)), key=lambda i: len(segments[i]))
+            long_segment = segments[longest_idx]
             
-        return text, segments[:self.num_segments]
+            # Split at the nearest sentence or space
+            split_point = long_segment.rfind('.', 0, len(long_segment)//2)
+            if split_point == -1:
+                split_point = long_segment.rfind(' ', 0, len(long_segment)//2)
+            
+            if split_point != -1:
+                segments[longest_idx:longest_idx+1] = [
+                    long_segment[:split_point].strip(),
+                    long_segment[split_point:].strip()
+                ]
+        
+        # Ensure we have exactly the number of segments needed
+        while len(segments) > self.num_segments:
+            # Merge shortest adjacent segments
+            lengths = [len(s) for s in segments]
+            min_combined_idx = min(range(len(segments)-1),
+                                 key=lambda i: lengths[i] + lengths[i+1])
+            segments[min_combined_idx:min_combined_idx+2] = [
+                segments[min_combined_idx] + " " + segments[min_combined_idx+1]
+            ]
+        
+        while len(segments) < self.num_segments:
+            # Split longest segment
+            max_idx = max(range(len(segments)), key=lambda i: len(segments[i]))
+            segment = segments[max_idx]
+            split_point = len(segment) // 2
+            split_point = segment.rfind(' ', 0, split_point)
+            if split_point == -1:
+                split_point = len(segment) // 2
+            
+            segments[max_idx:max_idx+1] = [
+                segment[:split_point].strip(),
+                segment[split_point:].strip()
+            ]
+        
+        return story, segments
 
     def _create_image_prompts(self, story, segments):
         """Generate consistent visual prompts"""
@@ -246,8 +281,10 @@ class VideoGenerator:
         
         return final_path, segment_durations
 
-    async def _compile_video(self, images, segments, audio_path, temp_path):
-        """Create final video with memory optimizations"""
+    def _compile_video(self, images, segments, audio_path, temp_path):
+        """Create final video with improved temporary file handling"""
+        os.environ["FFMPEG_TEMP_DIR"] = str(temp_path)
+        
         try:
             audio_path, segment_durations = audio_path
             clips = []
@@ -258,7 +295,7 @@ class VideoGenerator:
                 words_per_second = len(words) / duration
                 
                 # Split text into chunks that match speaking rhythm
-                chunk_size = max(1, int(words_per_second * 1.5))  # 1.5-second chunks
+                chunk_size = max(1, int(words_per_second * 1.5))
                 chunks = []
                 current_chunk = []
                 
@@ -273,45 +310,58 @@ class VideoGenerator:
                 
                 # Create sub-clips for each text chunk
                 chunk_duration = duration / len(chunks)
-                for i, chunk in enumerate(chunks):
+                for chunk in chunks:
                     image_with_caption = self._add_captions(image_array, chunk)
                     sub_clip = ImageClip(image_with_caption).set_duration(chunk_duration)
                     clips.append(sub_clip)
             
-            # Combine all clips
+            # Combine clips and add audio
             final_clip = concatenate_videoclips(clips)
             final_clip = final_clip.set_audio(AudioFileClip(str(audio_path)))
             
-            # Optimized video writing parameters
-            temp_video_path = temp_path / "temp_video.mp4"
+            # Create output path and ensure temp directory exists
+            output_path = temp_path / "output.mp4"
+            temp_path.mkdir(parents=True, exist_ok=True)
+            os.chmod(str(temp_path), 0o777)
+            
+            # Create temp audio file path
+            temp_audio = temp_path / "temp_audio.mp3"
+            
             final_clip.write_videofile(
-                str(temp_video_path),
-                fps=15,  # Reduced from 24
-                threads=2,  # Reduced from 4
+                str(output_path),
+                fps=15,
+                threads=2,
                 preset='ultrafast',
+                temp_audiofile=str(temp_audio),
                 ffmpeg_params=[
                     '-movflags', '+faststart',
-                    '-vf', 'scale=720:1280',  # Force scale
-                    '-c:v', 'libx264',  # Hardware-friendly codec
-                    '-crf', '28'  # Higher compression
+                    '-vf', f'scale={self.width}:{self.height}',
+                    '-c:v', 'libx264',
+                    '-crf', '28',
+                    '-tune', 'fastdecode'
                 ],
                 logger=None
             )
             
-            # Clear memory-intensive objects early
-            del images
-            del clips
-            del final_clip
-            
             # Read file into memory
-            with open(temp_video_path, 'rb') as f:
-                video_bytes = BytesIO(f.read())
+            video_bytes = BytesIO()
+            with open(output_path, 'rb') as f:
+                video_bytes.write(f.read())
             
             video_bytes.seek(0)
             return video_bytes
             
         except Exception as e:
             raise RuntimeError(f"Video compilation failed: {str(e)}")
+        finally:
+            # Clean up
+            try:
+                if 'final_clip' in locals():
+                    final_clip.close()
+                for clip in clips:
+                    clip.close()
+            except:
+                pass
 
     def _add_captions(self, image_array, text):
         """Universal font size solution"""
