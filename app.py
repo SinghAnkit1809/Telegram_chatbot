@@ -13,6 +13,7 @@ from image_gen import generate_image
 from video_gen import VideoGenerator
 import asyncio
 import json
+import gc
 
 def get_config():
     try:
@@ -592,14 +593,20 @@ async def handle_audio_callback(update: Update, context: ContextTypes.DEFAULT_TY
             all_voices = audio_gen.get_all_voices()
             voice_name = next((v["name"] for v in all_voices if v["voice"] == voice_id), voice_id)
             
+            print(f"Starting audio generation with voice: {voice_name}")
+            
             # Generate audio
             audio_data = await audio_gen.generate_audio(text, voice_id)
             
             if audio_data:
+                # Create BytesIO object
+                audio_io = io.BytesIO(audio_data)
+                audio_io.name = "audio.mp3"  # Name needed for Telegram
+                
                 # Send the audio file
                 await context.bot.send_audio(
                     chat_id=query.message.chat_id,
-                    audio=io.BytesIO(audio_data),
+                    audio=audio_io,
                     title=f"TTS Audio - {voice_name}",
                     caption=f"🎵 Text-to-Speech Audio\nVoice: {voice_name}"
                 )
@@ -609,6 +616,16 @@ async def handle_audio_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     text="✅ Audio generated successfully!",
                     reply_markup=None
                 )
+                
+                # Explicit cleanup
+                audio_io.close()
+                del audio_data
+                del audio_io
+                context.user_data.pop('audio_text', None)  # Remove from user data
+                gc.collect()  # Force garbage collection
+                
+                print("Audio memory cleaned up successfully")
+                
             else:
                 await query.edit_message_text(
                     text="❌ Failed to generate audio. Please try again.",
@@ -617,10 +634,19 @@ async def handle_audio_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 
         except Exception as e:
             print(f"Error in audio generation: {str(e)}")
+            # More detailed error message
+            error_message = f"❌ Error generating audio: {type(e).__name__}"
+            if str(e):
+                error_message += f" - {str(e)}"
+            
             await query.edit_message_text(
-                text=f"❌ Error generating audio: {str(e)}",
+                text=error_message,
                 reply_markup=None
             )
+            
+            # Cleanup on error
+            context.user_data.pop('audio_text', None)
+            gc.collect()
 
 # Add new callback handler
 async def verify_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

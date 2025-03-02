@@ -3,6 +3,7 @@ import edge_tts
 import io
 import os
 import tempfile
+import gc  # For garbage collection
 
 class AudioGenerator:
     def __init__(self):
@@ -30,10 +31,13 @@ class AudioGenerator:
     
     async def generate_audio(self, text, voice_id):
         """Generate audio using edge-tts with the specified voice"""
+        temp_path = None
         try:
             # Create a temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
                 temp_path = temp_file.name
+            
+            print(f"Creating audio with voice {voice_id} at path {temp_path}")
             
             # Configure the TTS communication
             tts = edge_tts.Communicate(text=text, voice=voice_id)
@@ -48,12 +52,17 @@ class AudioGenerator:
             # Clean up the temporary file
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
+                print(f"Temp file {temp_path} deleted successfully")
                 
             return audio_data
         
         except Exception as e:
             print(f"Error generating audio: {str(e)}")
             # Clean up if file exists
-            if 'temp_path' in locals() and os.path.exists(temp_path):
-                os.unlink(temp_path)
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                    print(f"Cleaned up temp file {temp_path} after error")
+                except Exception as cleanup_error:
+                    print(f"Failed to clean temp file: {cleanup_error}")
             raise
