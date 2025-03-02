@@ -3,6 +3,7 @@ from telegram import Update, ForceReply, InlineKeyboardButton, InlineKeyboardMar
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from admin import setup_admin_handlers, is_feature_enabled, check_and_show_broadcast
 from task_queue import task_queue, start_cleanup
+from audio_gen import AudioGenerator
 import time
 import io
 import requests
@@ -520,6 +521,107 @@ async def check_video_task_status_loop(context, task_id, chat_id, message_id, to
         except:
             pass
 
+async def audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /audio command"""
+    if not await check_membership(update, context):
+        return await send_join_prompt(update, context)
+    
+    if not context.args:
+        await update.message.reply_text(
+            "Please provide the text to convert to speech.\n"
+            "Example: /audio Hello, this is a test message."
+        )
+        return
+    
+    text = ' '.join(context.args)
+    context.user_data['audio_text'] = text
+    
+    # Get all available voices
+    audio_gen = AudioGenerator()
+    all_voices = audio_gen.get_all_voices()
+    
+    # Create buttons categorized by language
+    english_buttons = []
+    indian_buttons = []
+    
+    for i, voice in enumerate(all_voices):
+        voice_name = voice["name"]
+        voice_id = voice["voice"]
+        button = InlineKeyboardButton(voice_name, callback_data=f'audio:{voice_id}')
+        
+        if i < 5:  # First 5 are English
+            english_buttons.append(button)
+        else:  # Rest are Indian
+            indian_buttons.append(button)
+    
+    # Arrange buttons in rows
+    keyboard = []
+    keyboard.append([InlineKeyboardButton("🇺🇸 English Voices", callback_data="audio:none")])
+    keyboard.extend([english_buttons[i:i+2] for i in range(0, len(english_buttons), 2)])
+    keyboard.append([InlineKeyboardButton("🇮🇳 Indian Voices", callback_data="audio:none")])
+    keyboard.extend([indian_buttons[i:i+2] for i in range(0, len(indian_buttons), 2)])
+    
+    await update.message.reply_text(
+        "Choose a voice for your audio:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def handle_audio_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle button callbacks for audio generation"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data.startswith('audio:'):
+        voice_id = query.data.split(':')[1]
+        
+        # Skip if this is a category header
+        if voice_id == "none":
+            return
+        
+        try:
+            text = context.user_data.get('audio_text', "Hello, this is a test message.")
+            
+            # Update message to show generation status
+            await query.edit_message_text(
+                text="🔊 Generating your audio...",
+                reply_markup=None
+            )
+            
+            # Get voice name for display
+            audio_gen = AudioGenerator()
+            all_voices = audio_gen.get_all_voices()
+            voice_name = next((v["name"] for v in all_voices if v["voice"] == voice_id), voice_id)
+            
+            # Generate audio
+            audio_data = await audio_gen.generate_audio(text, voice_id)
+            
+            if audio_data:
+                # Send the audio file
+                await context.bot.send_audio(
+                    chat_id=query.message.chat_id,
+                    audio=io.BytesIO(audio_data),
+                    title=f"TTS Audio - {voice_name}",
+                    caption=f"🎵 Text-to-Speech Audio\nVoice: {voice_name}"
+                )
+                
+                # Update status message
+                await query.edit_message_text(
+                    text="✅ Audio generated successfully!",
+                    reply_markup=None
+                )
+            else:
+                await query.edit_message_text(
+                    text="❌ Failed to generate audio. Please try again.",
+                    reply_markup=None
+                )
+                
+        except Exception as e:
+            print(f"Error in audio generation: {str(e)}")
+            await query.edit_message_text(
+                text=f"❌ Error generating audio: {str(e)}",
+                reply_markup=None
+            )
+
 # Add new callback handler
 async def verify_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -557,6 +659,8 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(handle_model_callback, pattern='^chatmodel:'))
     app.add_handler(CallbackQueryHandler(handle_image_callback))
     app.add_handler(CommandHandler("video", video))
+    app.add_handler(CommandHandler("audio", audio))
+    app.add_handler(CallbackQueryHandler(handle_audio_callback, pattern='^audio:'))
     
     print("Bot is running...")
     try:
