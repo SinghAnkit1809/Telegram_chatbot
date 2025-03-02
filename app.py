@@ -323,8 +323,7 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Send initial status message
     status_msg = await update.message.reply_text(
-        "🎥 Video generation has been queued. You'll be notified when it's ready.\n"
-        "You can continue using other bot features while your video is being generated."
+        "⏳ Checking video generation queue..."
     )
     
     try:
@@ -344,35 +343,72 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Generate a unique task ID
         task_id = f"video_{int(time.time())}_{random.randint(1000, 9999)}"
         
-        # Call _generate_video_task with task_id as a keyword argument
-        task_id = await generator._generate_video_task(
-            topic=topic,
-            progress_callback=progress_update,
-            task_id=task_id
-        )
-        
-        # Start monitoring task status
-        asyncio.create_task(
-            check_video_task_status_loop(
-                context,
-                task_id=task_id,
-                chat_id=update.effective_chat.id,
-                message_id=status_msg.message_id,
-                topic=topic
+        try:
+            # Call _generate_video_task with task_id as a keyword argument
+            # Now returns (task_id, position)
+            task_result = await generator._generate_video_task(
+                topic=topic,
+                progress_callback=progress_update,
+                task_id=task_id
             )
-        )
-        
+            
+            # Unpack the result
+            if isinstance(task_result, tuple) and len(task_result) == 2:
+                task_id, queue_position = task_result
+            else:
+                task_id = task_result
+                queue_position = 1  # Default if old format
+            
+            # Update message with queue position
+            if queue_position > 1:
+                await context.bot.edit_message_text(
+                    chat_id=status_msg.chat_id,
+                    message_id=status_msg.message_id,
+                    text=f"🎥 Video generation has been queued.\n\n🔢 Your position: {queue_position} in queue\n\nYou'll be notified when your video is ready. You can continue using other bot features while waiting."
+                )
+            else:
+                await context.bot.edit_message_text(
+                    chat_id=status_msg.chat_id,
+                    message_id=status_msg.message_id,
+                    text=f"🎥 Video generation has started processing.\n\nYou'll be notified when it's ready. You can continue using other bot features while waiting."
+                )
+            
+            # Start monitoring task status
+            asyncio.create_task(
+                check_video_task_status_loop(
+                    context,
+                    task_id=task_id,
+                    chat_id=update.effective_chat.id,
+                    message_id=status_msg.message_id,
+                    topic=topic
+                )
+            )
+            
+        except ValueError as e:
+            if "Queue is full" in str(e):
+                await context.bot.edit_message_text(
+                    chat_id=status_msg.chat_id,
+                    message_id=status_msg.message_id,
+                    text=f"⚠️ Video generation queue is full (max 20 tasks).\nPlease try again later."
+                )
+            else:
+                raise
+            
     except Exception as e:
-        error_msg = f"❌ Video generation failed: {str(e)}"
+        error_msg = f"❌ Video generation request failed: {str(e)}"
         print(error_msg)
-        await update.message.reply_text(error_msg)
-
+        await context.bot.edit_message_text(
+            chat_id=status_msg.chat_id,
+            message_id=status_msg.message_id,
+            text=error_msg
+        )
 # Add new function for status checking loop
 async def check_video_task_status_loop(context, task_id, chat_id, message_id, topic):
-    """Continuously check video task status"""
+    """Continuously check video task status with queue position updates"""
     try:
-        max_attempts = 20  # Maximum number of attempts (10 minutes total with 30s interval)
+        max_attempts = 60  # Increased for longer wait in queue
         attempts = 0
+        last_position = None
         
         while attempts < max_attempts:
             task_status = task_queue.get_task_status(task_id)
@@ -432,16 +468,39 @@ async def check_video_task_status_loop(context, task_id, chat_id, message_id, to
                     text=f"❌ Video generation failed: {error}"
                 )
                 return
+                
+            elif status == 'queued':
+                position = task_status.get('position', 0)
+                total = task_status.get('total_in_queue', 0)
+                
+                # Only update message if position changed
+                if position != last_position:
+                    last_position = position
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=f"⏳ Video waiting in queue...\nPosition: {position} of {total}\nEstimated wait: {position * 2}-{position * 4} minutes"
+                    )
+                    # Sleep longer if in queue to reduce API load
+                    await asyncio.sleep(15)
+                    continue
             
-            # Update progress message with attempt counter
+            elif status == 'processing':
+                # Update progress message with attempt counter
+                time_elapsed = attempts * 15  # Using 15-second intervals now
+                minutes = time_elapsed // 60
+                seconds = time_elapsed % 60
+                
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=f"🎥 Video generation in progress...\nTime elapsed: {minutes}m {seconds}s"
+                )
+            
+            # Increment attempt counter
             attempts += 1
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=f"🎥 Video generation in progress...\nTime elapsed: {attempts * 30} seconds"
-            )
-            
-            await asyncio.sleep(30)
+            # Longer sleep interval to reduce API load
+            await asyncio.sleep(15)
         
         # If we exit the loop without returning, we timed out
         await context.bot.edit_message_text(
