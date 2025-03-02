@@ -187,6 +187,7 @@ async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    context.application.bot_data.setdefault("registered_chats", set()).add(update.effective_chat.id)
     if not is_feature_enabled("imagine"):
         await update.message.reply_text("⚠️ Image generation is currently disabled by the administrator.")
         return
@@ -307,6 +308,8 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=None
             )
 async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    context.application.bot_data.setdefault("registered_chats", set()).add(update.effective_chat.id)
     if not is_feature_enabled("video"):
         await update.message.reply_text("⚠️ Video generation is currently disabled.")
         return
@@ -523,9 +526,15 @@ async def check_video_task_status_loop(context, task_id, chat_id, message_id, to
             pass
 
 async def audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    context.application.bot_data.setdefault("registered_chats", set()).add(update.effective_chat.id)
     """Handle /audio command"""
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
+    
+    if not is_feature_enabled("audio"):
+        await update.message.reply_text("⚠️ Audio generation is currently disabled by the administrator.")
+        return
     
     if not context.args:
         await update.message.reply_text(

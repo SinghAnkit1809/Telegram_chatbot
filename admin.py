@@ -16,7 +16,8 @@ DEFAULT_CONFIG = {
         "chat": True,
         "imagine": True,
         "video": True,
-        "model_switch": True
+        "model_switch": True,
+        "audio":True
     },
     "broadcast_message": "",
     "broadcast_active": False,
