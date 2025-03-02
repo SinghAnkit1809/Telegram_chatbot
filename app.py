@@ -683,10 +683,11 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_with_bot))
     app.add_handler(CommandHandler("imagine", imagine))
     app.add_handler(CallbackQueryHandler(handle_model_callback, pattern='^chatmodel:'))
+    app.add_handler(CallbackQueryHandler(handle_audio_callback, pattern='^audio:'))
     app.add_handler(CallbackQueryHandler(handle_image_callback))
     app.add_handler(CommandHandler("video", video))
     app.add_handler(CommandHandler("audio", audio))
-    app.add_handler(CallbackQueryHandler(handle_audio_callback, pattern='^audio:'))
+    
     
     print("Bot is running...")
     try:
