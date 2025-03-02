@@ -17,7 +17,7 @@ DEFAULT_CONFIG = {
         "imagine": True,
         "video": True,
         "model_switch": True,
-        "audio":True
+        "audio": True
     },
     "broadcast_message": "",
     "broadcast_active": False,
@@ -28,24 +28,16 @@ DEFAULT_CONFIG = {
 # Initialize or load config
 def get_config():
     try:
-        with open('admin_config.json', 'r') as f:
-            return json.load(f)
+        with open(CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+            # Ensure audio feature exists (in case of older config files)
+            if "audio" not in config["features"]:
+                config["features"]["audio"] = True
+                save_config(config)
+            return config
     except FileNotFoundError:
-        # Use the default structure from admin.py
-        return {
-            "features": {
-                "chat": True,
-                "imagine": True,
-                "video": True,
-                "model_switch": True
-            },
-            "broadcast_message": "",
-            "broadcast_active": False,
-            "broadcast_id": None,
-            "broadcast_seen": {}
-        }
-
-
+        # Use the default structure
+        return DEFAULT_CONFIG.copy()
 
 # Save config
 def save_config(config):

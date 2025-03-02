@@ -3,7 +3,8 @@
         "chat": true,
         "imagine": true,
         "video": true,
-        "model_switch": true
+        "model_switch": true,
+        "audio": false
     },
     "broadcast_message": "hello everyone!",
     "broadcast_active": false,
