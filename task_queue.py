@@ -115,7 +115,7 @@ class TaskQueue:
         }
 
 # Global task queue instance
-task_queue = TaskQueue(max_workers=2, max_queue_size=20)
+task_queue = TaskQueue(max_workers=1, max_queue_size=20)
 
 
 def async_task(func):

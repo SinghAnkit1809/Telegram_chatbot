@@ -37,7 +37,7 @@ class VideoGenerator:
         
         for attempt in range(max_retries):
             try:
-                response = requests.get(image_url, timeout=30)
+                response = requests.get(image_url, timeout=60)
                 response.raise_for_status()
                 return Image.open(BytesIO(response.content))
             except Exception as e:
@@ -264,7 +264,7 @@ class VideoGenerator:
         
         for i, text in enumerate(segments):
             path = temp_path / f"audio_{i}.mp3"
-            communicate = edge_tts.Communicate(text, "en-US-ChristopherNeural")
+            communicate = edge_tts.Communicate(text, "en-US-GuyNeural")
             await communicate.save(str(path))
             audio_files.append(str(path))
             
