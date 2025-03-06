@@ -4,7 +4,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 class TaskQueue:
-    def __init__(self, max_workers: int = 2, max_queue_size: int = 20):
+    def __init__(self, max_workers: int = 1, max_queue_size: int = 20):
         self.video_queue = asyncio.Queue(maxsize=max_queue_size)
         self.results = {}
         self.max_workers = max_workers
