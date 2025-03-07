@@ -399,7 +399,7 @@ class VideoGenerator:
         
         for word in words:
             current_line.append(word)
-            if len(current_line) >= 4:  # Limit to 4 words per line
+            if len(current_line) >= 3:  # Limit to 4 words per line
                 lines.append(' '.join(current_line))
                 current_line = []
         

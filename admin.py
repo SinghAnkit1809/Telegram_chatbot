@@ -24,6 +24,15 @@ DEFAULT_CONFIG = {
     "broadcast_id": None,  # To track current broadcast
     "broadcast_seen": {}  # To track which users have seen the broadcast
 }
+USERS_FILE = "registered_users.json"
+def load_registered_users():
+    """Load registered users from file or return empty set if file doesn't exist"""
+    try:
+        with open(USERS_FILE, 'r') as f:
+            users = json.load(f)
+            return set(users)  # Convert list back to set
+    except FileNotFoundError:
+        return set()
 
 # Initialize or load config
 def get_config():
@@ -101,7 +110,7 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     message = ' '.join(context.args)
-    registered_chats = context.application.bot_data.get("registered_chats", set())
+    registered_chats = load_registered_users()
     
     sent_count = 0
     failed_count = 0

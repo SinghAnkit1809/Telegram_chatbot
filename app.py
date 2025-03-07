@@ -7,6 +7,7 @@ from audio_gen import AudioGenerator
 import time
 import io
 import requests
+import json
 import os
 import random
 from image_gen import generate_image
@@ -15,6 +16,36 @@ import asyncio
 import json
 import gc
 
+USERS_FILE = "registered_users.json"
+
+def load_registered_users():
+    """Load registered users from file or return empty set if file doesn't exist/malformed"""
+    try:
+        with open(USERS_FILE, 'r') as f:
+            content = f.read().strip()
+            if not content:  # Handle empty file
+                return set()
+            users = json.loads(content)
+            return set(users)  # Convert list back to set
+    except (FileNotFoundError, json.JSONDecodeError):
+        # Create file with empty list if it doesn't exist or is malformed
+        save_registered_users(set())
+        return set()
+
+def save_registered_users(users):
+    """Save registered users to file with proper error handling"""
+    try:
+        with open(USERS_FILE, 'w') as f:
+            json.dump(list(users), f, indent=2)
+    except Exception as e:
+        print(f"Error saving registered users: {e}")
+        # Create backup of current users
+        backup_file = f"{USERS_FILE}.backup"
+        try:
+            with open(backup_file, 'w') as f:
+                json.dump(list(users), f, indent=2)
+        except Exception as be:
+            print(f"Error creating backup: {be}")
 def get_config():
     try:
         with open('admin_config.json', 'r') as f:
@@ -68,12 +99,18 @@ async def send_join_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.application.bot_data.setdefault("registered_chats", set()).add(update.effective_chat.id)
+    # Load existing users
+    registered_chats = context.application.bot_data.setdefault("registered_chats", load_registered_users())
+    # Add current user
+    registered_chats.add(update.effective_chat.id)
+    # Save updated users list
+    save_registered_users(registered_chats)
+
     if not await check_membership(update, context):
         return await send_join_prompt(update, context)
     
     # Send welcome message
-    await update.message.reply_text("Hello! I'm Luna chatbot. How can I assist you today?")
+    await update.message.reply_text("Hello! I'm Lunark. How can I assist you today?")
     
     # Check if there's an active broadcast message
     config = get_config()
@@ -123,7 +160,12 @@ async def handle_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
 async def chat_with_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.application.bot_data.setdefault("registered_chats", set()).add(update.effective_chat.id)
+    registered_chats = context.application.bot_data.setdefault("registered_chats", load_registered_users())
+    # Add current user
+    registered_chats.add(update.effective_chat.id)
+    # Save updated users list
+    save_registered_users(registered_chats)
+
     if not is_feature_enabled("chat"):
         await update.message.reply_text("⚠️ Chat functionality is currently disabled.")
         return
@@ -308,6 +350,7 @@ async def handle_image_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=None
             )
 async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
 
     context.application.bot_data.setdefault("registered_chats", set()).add(update.effective_chat.id)
     if not is_feature_enabled("video"):
@@ -345,16 +388,15 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Initialize generator and start task
         generator = VideoGenerator()
-        # Generate a unique task ID
         task_id = f"video_{int(time.time())}_{random.randint(1000, 9999)}"
         
         try:
-            # Call _generate_video_task with task_id as a keyword argument
-            # Now returns (task_id, position)
+            # Pass user_id as a kwarg
             task_result = await generator._generate_video_task(
                 topic=topic,
                 progress_callback=progress_update,
-                task_id=task_id
+                task_id=task_id,
+                user_id=user_id  # Pass user_id as kwarg
             )
             
             # Unpack the result
@@ -390,7 +432,13 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
         except ValueError as e:
-            if "Queue is full" in str(e):
+            if "already have a video" in str(e):
+                await context.bot.edit_message_text(
+                    chat_id=status_msg.chat_id,
+                    message_id=status_msg.message_id,
+                    text="⚠️ You already have a video being generated. Please wait for it to complete before requesting another."
+                )
+            elif "Queue is full" in str(e):
                 await context.bot.edit_message_text(
                     chat_id=status_msg.chat_id,
                     message_id=status_msg.message_id,
@@ -672,6 +720,9 @@ if __name__ == "__main__":
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable missing!")
     
+    if not os.path.exists(USERS_FILE):
+        save_registered_users(set())
+    
     # Initialize asyncio loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -680,6 +731,9 @@ if __name__ == "__main__":
     loop.run_until_complete(task_queue.start())
     
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Load registered users into bot_data
+    app.bot_data["registered_chats"] = load_registered_users()
 
     # Start the cleanup task with the loop
     start_cleanup(loop)
